@@ -1,0 +1,557 @@
+!MNH_LIC Copyright 1994-2022 CNRS, Meteo-France and Universite Paul Sabatier
+!MNH_LIC This is part of the Meso-NH software governed by the CeCILL-C licence
+!MNH_LIC version 1. See LICENSE, CeCILL-C_V1-en.txt and CeCILL-C_V1-fr.txt
+!MNH_LIC for details. version 1.
+MODULE MODE_TKE_EPS_SOURCES
+IMPLICIT NONE
+CONTAINS
+      SUBROUTINE TKE_EPS_SOURCES(D,CST,CSTURB,BUCONF,HPROGRAM,         &
+                    & KMI,PTKEM,PLM,PLEPS,PDP,                         &
+                    & PTRH,PRHODJ,PDZZ,PDXX,PDYY,PDZX,PDZY,PZZ,        &
+                    & PTSTEP,PIMPL,PEXPL,                              &
+                    & HTURBLEN,HTURBDIM,                               &
+                    & TPFILE,OTURB_DIAG,OLES_CALL,                     &
+                    & PTP,PRTKES,PRTHLS,PCOEF_DISS,PTDIFF,PTDISS,PRTKEMS,&
+                    & TBUDGETS, KBUDGETS,                              &
+                    & PEDR, PTR,PDISS                                  )
+!     ##################################################################
+!
+!
+!!****  *TKE_EPS_SOURCES* - routine to compute the sources of the turbulent 
+!!      evolutive variables: TKE and its dissipation when it is taken into 
+!!      account. The contribution to the heating of tke dissipation is computed.
+!!
+!!    PURPOSE
+!!    -------
+!       The purpose of this routine is to compute the sources necessary for
+!     the evolution of the turbulent kinetic energy and its dissipation 
+!     if necessary.
+!
+!!**  METHOD
+!!    ------
+!!      The vertical turbulent flux is computed in an off-centered 
+!!    implicit scheme (a Crank-Nicholson type with coefficients different 
+!!    than 0.5), which allows to vary the degree of implicitness of the 
+!!    formulation.
+!!      In high resolution, the horizontal transport terms are also
+!!    calculated, but explicitly. 
+!!      The evolution of the dissipation as a variable is made if 
+!!    the parameter HTURBLEN is set equal to KEPS. The same reasoning 
+!!    made for TKE applies.
+!!
+!!    EXTERNAL
+!!    --------
+!!      GX_U_M,GY_V_M,GZ_W_M
+!!      GX_M_U,GY_M_V          :  Cartesian vertical gradient operators
+!!
+!!      MXF,MXM.MYF,MYM,MZF,MZM:  Shuman functions (mean operators)
+!!      DZF                    :  Shuman functions (difference operators)     
+!!
+!!      SUBROUTINE TRIDIAG     :  to solve an implicit temporal scheme
+!!      
+!!
+!!    IMPLICIT ARGUMENTS
+!!    ------------------
+!!      Module MODD_CST : contains physical constants
+!!
+!!           XG         : gravity constant
+!!
+!!      Module MODD_CTURB: contains the set of constants for
+!!                        the turbulence scheme
+!!
+!!           CSTURB%XCET,CSTURB%XCED  : transport and dissipation cts. for the TKE
+!!           XCDP,XCDD,XCDT: constants from the parameterization of
+!!                        the K-epsilon equation
+!!           CSTURB%XTKEMIN,XEPSMIN : minimum values for the TKE and its
+!!                        dissipation
+!!
+!!      Module MODD_PARAMETERS: 
+!!
+!!           JPVEXT_TURB
+!!      Module MODD_BUDGET:
+!!         NBUMOD       : model in which budget is calculated
+!!         CBUTYPE      : type of desired budget
+!!                          'CART' for cartesian box configuration
+!!                          'MASK' for budget zone defined by a mask 
+!!                          'NONE'  ' for no budget
+!!         LBU_RTKE     : logical for budget of RTKE (turbulent kinetic energy)
+!!                        .TRUE. = budget of RTKE       
+!!                        .FALSE. = no budget of RTKE
+!!
+!!
+!!    REFERENCE
+!!    ---------
+!!      Book 2 of documentation (routine TKE_EPS_SOURCES)
+!!      Book 1 of documentation (Chapter: Turbulence)
+!!
+!!    AUTHOR
+!!    ------
+!!      Joan Cuxart             * INM and Meteo-France *
+!!
+!!    MODIFICATIONS
+!!    -------------
+!!      Original       August 23, 1994
+!!      Modifications: Feb 14, 1995 (J.Cuxart and J.Stein)
+!!                                  Doctorization and Optimization
+!!                     June 29, 1995 (J.Stein) TKE budget
+!!                     June 28, 1995 (J.Cuxart) Add LES tools
+!!      Modifications: February 29, 1996 (J. Stein) optimization
+!!      Modifications: May 6, 1996 (N. Wood) Extend some loops over
+!!                                              the outer points
+!!      Modifications: August 30, 1996 (P. Jabouille)  calcul ZFLX at the
+!!                                                      IKU level
+!!                     October 10, 1996 (J.Stein)  set Keff at t-deltat
+!!                     Oct 8, 1996 (Cuxart,Sanchez) Var.LES: XETR_TF,XDISS_TF
+!!                     December 20, 1996 (J.-P. Pinty) update the CALL BUDGET
+!!                     November 24, 1997 (V. Masson) bug in <v'e>
+!!                                                   removes the DO loops
+!!                     Augu. 9, 1999 (J.Stein) TKE budget correction
+!!                     Mar 07  2001 (V. Masson and J. Stein) remove the horizontal 
+!!                                         turbulent transports of Tke computation
+!!                     Nov 06, 2002 (V. Masson) LES budgets
+!!                     July 20, 2003 (J.-P. Pinty P Jabouille) add the dissipative heating
+!!                     May   2006    Remove KEPS
+!!                     October 2009 (G. Tanguy) add ILENCH=LEN(YCOMMENT) after
+!!                                              change of YCOMMENT
+!!                     2012-02 Y. Seity,  add possibility to run with reversed 
+!!                                    vertical levels
+!!                     2014-11 Y. Seity,  add output terms for TKE DDHs budgets
+!! --------------------------------------------------------------------------
+!!                     2015-01 (J. Escobar) missing get_halo(ZRES) for JPHEXT<> 1 
+!!     J.Escobar : 15/09/2015 : WENO5 & JPHEXT <> 1 
+!!  Philippe Wautelet: 05/2016-04/2018: new data structures and calls for I/O
+!  P. Wautelet 20/05/2019: add name argument to ADDnFIELD_ll + new ADD4DFIELD_ll subroutine
+!  P. Wautelet    02/2020: use the new data structures and subroutines for budgets
+! --------------------------------------------------------------------------
+!
+!*       0.   DECLARATIONS
+!             ------------
+!
+USE PARKIND1, ONLY : JPRB
+USE YOMHOOK , ONLY : LHOOK, DR_HOOK
+!
+USE MODD_ARGSLIST_ll,    ONLY: LIST_ll
+USE MODD_BUDGET, ONLY: TBUDGETCONF_t, NBUDGET_TKE, NBUDGET_TH, TBUDGETDATA
+USE MODD_CST, ONLY: CST_t
+USE MODD_CTURB, ONLY: CSTURB_t
+USE MODD_DIMPHYEX, ONLY: DIMPHYEX_t
+USE MODD_DIAG_IN_RUN, ONLY : LDIAG_IN_RUN, XCURRENT_TKE_DISS
+USE MODD_FIELD, ONLY: TFIELDDATA, TYPEREAL
+USE MODD_IO, ONLY: TFILEDATA
+USE MODD_LES
+USE MODD_PARAMETERS, ONLY: JPVEXT_TURB
+!
+USE MODE_BUDGET, ONLY: BUDGET_STORE_ADD, BUDGET_STORE_END, BUDGET_STORE_INIT
+USE MODE_IO_FIELD_WRITE, ONLY: IO_FIELD_WRITE
+USE MODE_ll
+!
+USE SHUMAN_PHY, ONLY : MZM_PHY
+!
+USE MODI_GET_HALO
+USE MODI_GRADIENT_M
+USE MODI_GRADIENT_U
+USE MODI_GRADIENT_V
+USE MODI_GRADIENT_W
+USE MODI_LES_MEAN_SUBGRID
+USE MODE_TRIDIAG_TKE, ONLY: TRIDIAG_TKE
+USE MODI_SHUMAN , ONLY : DZM, DZF, MZM, MZF
+!
+!
+IMPLICIT NONE
+!
+!
+!*       0.1  declarations of arguments
+!
+!
+TYPE(DIMPHYEX_t),        INTENT(IN)   :: D
+TYPE(CST_t),             INTENT(IN)   :: CST
+TYPE(CSTURB_t),          INTENT(IN)   :: CSTURB
+TYPE(TBUDGETCONF_t),     INTENT(IN)   :: BUCONF
+INTEGER,                 INTENT(IN)   ::  KMI          ! model index number  
+REAL, DIMENSION(D%NIT,D%NJT,D%NKT),  INTENT(IN)   ::  PTKEM        ! TKE at t-deltat
+REAL, DIMENSION(D%NIT,D%NJT,D%NKT),  INTENT(IN)   ::  PLM          ! mixing length         
+REAL, DIMENSION(D%NIT,D%NJT,D%NKT),  INTENT(IN)   ::  PLEPS        ! dissipative length
+REAL, DIMENSION(D%NIT,D%NJT,D%NKT),  INTENT(IN)   ::  PRHODJ       ! density * grid volume
+REAL, DIMENSION(D%NIT,D%NJT,D%NKT),  INTENT(IN)   ::  PDXX,PDYY,PDZZ,PDZX,PDZY
+                                                       ! metric coefficients
+REAL, DIMENSION(D%NIT,D%NJT,D%NKT),  INTENT(IN)   ::  PZZ          ! physical height w-pt
+REAL,                    INTENT(IN)   ::  PTSTEP       ! Time step 
+REAL,                    INTENT(IN)   ::  PEXPL, PIMPL ! Coef. temporal. disc.
+CHARACTER(LEN=4),        INTENT(IN)   ::  HTURBDIM     ! dimensionality of the
+                                                       ! turbulence scheme
+CHARACTER(LEN=4),        INTENT(IN)   ::  HTURBLEN     ! kind of mixing length
+CHARACTER(LEN=6),        INTENT(IN)   ::  HPROGRAM     ! CPROGRAM is the program currently running (modd_conf)
+TYPE(TFILEDATA),         INTENT(IN)   ::  TPFILE       ! Output file
+LOGICAL,                 INTENT(IN)   ::  OLES_CALL    !
+LOGICAL,                 INTENT(IN)   ::  OTURB_DIAG   ! switch to write some
+                                  ! diagnostic fields in the syncronous FM-file
+REAL, DIMENSION(D%NIT,D%NJT,D%NKT),  INTENT(INOUT)::  PDP          ! Dyn. prod. of TKE
+REAL, DIMENSION(D%NIT,D%NJT,D%NKT),  INTENT(IN)   ::  PTRH
+REAL, DIMENSION(D%NIT,D%NJT,D%NKT),  INTENT(IN)   ::  PTP          ! Ther. prod. of TKE
+REAL, DIMENSION(D%NIT,D%NJT,D%NKT),  INTENT(INOUT)::  PRTKES       ! RHOD * Jacobian *
+                                                       ! TKE at t+deltat
+REAL, DIMENSION(D%NIT,D%NJT,D%NKT),  INTENT(INOUT)::  PRTHLS       ! Source of Theta_l
+REAL, DIMENSION(D%NIT,D%NJT,D%NKT),  INTENT(IN)   ::  PCOEF_DISS   ! 1/(Cph*Exner)
+REAL, DIMENSION(D%NIT,D%NJT,D%NKT),  INTENT(OUT)  ::  PTDIFF       ! Diffusion TKE term
+REAL, DIMENSION(D%NIT,D%NJT,D%NKT),  INTENT(OUT)  ::  PTDISS       ! Dissipation TKE term
+REAL, DIMENSION(D%NIT,D%NJT,D%NKT),  INTENT(IN)  ::  PRTKEMS      ! Advection source
+TYPE(TBUDGETDATA), DIMENSION(KBUDGETS), INTENT(INOUT) :: TBUDGETS
+INTEGER, INTENT(IN) :: KBUDGETS
+REAL, DIMENSION(D%NIT,D%NJT,D%NKT),  INTENT(OUT), OPTIONAL  ::  PTR          ! Transport prod. of TKE
+REAL, DIMENSION(D%NIT,D%NJT,D%NKT),  INTENT(OUT), OPTIONAL  ::  PDISS        ! Dissipation of TKE
+REAL, DIMENSION(D%NIT,D%NJT,D%NKT),  INTENT(OUT), OPTIONAL  ::  PEDR         ! EDR 
+!
+!
+!
+!*       0.2  declaration of local variables
+!
+REAL, DIMENSION(D%NIT,D%NJT,D%NKT) ::         &
+       ZA,       & ! under diagonal elements of the tri-diagonal matrix involved
+                   ! in the temporal implicit scheme
+       ZRES,     & ! treated variable at t+ deltat when the turbu-
+                   ! lence is the only source of evolution added to the ones
+                   ! considered in ZSOURCE. This variable is also used to
+                   ! temporarily store some diagnostics stored in FM file
+       ZFLX,     & ! horizontal or vertical flux of the treated variable
+       ZSOURCE,  & ! source of evolution for the treated variable
+       ZKEFF,    & ! effectif diffusion coeff = LT * SQRT( TKE )
+       ZTR,      & ! Transport term
+       ZMWORK1,ZMWORK2,& ! working var. for MZM/MZF operators (array syntax)
+       ZDWORK1,ZDWORK2   ! working var. for DZM/DZF operators (array syntax)
+
+LOGICAL,DIMENSION(D%NIT,D%NJT,D%NKT) :: GTKENEG
+                   ! 3D mask .T. if TKE < CSTURB%XTKEMIN
+INTEGER             :: IIE,IIB,IJE,IJB,IKB,IKE,IKTB,IKTE      ! Index value for the mass points of the domain 
+!
+TYPE(LIST_ll), POINTER :: TZFIELDDISS_ll ! list of fields to exchange
+INTEGER                :: IINFO_ll       ! return code of parallel routine
+TYPE(TFIELDDATA) :: TZFIELD
+REAL(KIND=JPRB) :: ZHOOK_HANDLE
+INTEGER :: JI,JJ,JK
+!
+!----------------------------------------------------------------------------
+NULLIFY(TZFIELDDISS_ll)
+!
+!*       1.   PRELIMINARY COMPUTATIONS
+!             ------------------------
+!
+IF (LHOOK) CALL DR_HOOK('TKE_EPS_SOURCES',0,ZHOOK_HANDLE)
+!
+IKTB=D%NKTB
+IKTE=D%NKTE
+IKB=D%NKB
+IKE=D%NKE
+IIE=D%NIEC
+IIB=D%NIBC
+IJE=D%NJEC
+IJB=D%NJBC
+!
+! compute the effective diffusion coefficient at the mass point
+DO JK=IKTB,IKTE 
+  DO JJ=IJB,IJE 
+    DO JI=IIB,IIE 
+      ZKEFF(JI,JJ,JK) = PLM(JI,JJ,JK) * SQRT(PTKEM(JI,JJ,JK))
+    ENDDO
+  ENDDO
+ENDDO
+!
+!----------------------------------------------------------------------------
+!
+!*       2.   TKE EQUATION  
+!             ------------
+!
+!*       2.1  Horizontal turbulent explicit transport
+!
+!
+! Complete the sources of TKE with the horizontal turbulent explicit transport
+!
+IF (HTURBDIM=='3DIM') THEN
+  ZTR(IIB:IIE,IJB:IJE,IKTB:IKTE)=PTRH(IIB:IIE,IJB:IJE,IKTB:IKTE)
+ELSE
+  ZTR(IIB:IIE,IJB:IJE,IKTB:IKTE)=0.
+END IF
+!
+!
+!*       2.2  Explicit TKE sources except horizontal turbulent transport 
+!
+! extrapolate the dynamic production with a 1/Z law from its value at the 
+! W(IKB+1) value stored in PDP(IKB) to the mass localization tke(IKB)
+!
+DO JJ=IJB,IJE 
+  DO JI=IIB,IIE 
+    PDP(JI,JJ,IKB) = PDP(JI,JJ,IKB) * (1. + PDZZ(JI,JJ,IKB+D%NKL)/PDZZ(JI,JJ,IKB))
+  ENDDO
+ENDDO
+!
+! Compute the source terms for TKE: ( ADVECtion + NUMerical DIFFusion + ..)
+! + (Dynamical Production) + (Thermal Production) - (dissipation) 
+!
+CALL MZM_PHY(D,ZKEFF,ZMWORK1)
+CALL MZM_PHY(D,PRHODJ,ZMWORK2)
+!
+DO JK=IKTB,IKTE 
+  DO JJ=IJB,IJE 
+    DO JI=IIB,IIE 
+      ZFLX(JI,JJ,JK) = CSTURB%XCED * SQRT(PTKEM(JI,JJ,JK)) / PLEPS(JI,JJ,JK)
+      ZSOURCE(JI,JJ,JK) = ( PRTKES(JI,JJ,JK) +  PRTKEMS(JI,JJ,JK) ) &
+      / PRHODJ(JI,JJ,JK) - PTKEM(JI,JJ,JK) / PTSTEP &
+      + PDP(JI,JJ,JK) + PTP(JI,JJ,JK) + ZTR(JI,JJ,JK) & 
+      - PEXPL * ZFLX(JI,JJ,JK) * PTKEM(JI,JJ,JK)
+!
+!*       2.2  implicit vertical TKE transport
+!
+!
+! Compute the vector giving the elements just under the diagonal for the 
+! matrix inverted in TRIDIAG 
+!
+      ZA(JI,JJ,JK)     = - PTSTEP * CSTURB%XCET * ZMWORK1(JI,JJ,JK) & 
+      * ZMWORK2(JI,JJ,JK) / PDZZ(JI,JJ,JK)**2
+    ENDDO
+  ENDDO
+ENDDO
+!
+! Compute TKE at time t+deltat: ( stored in ZRES )
+!
+CALL TRIDIAG_TKE(D,PTKEM,ZA,PTSTEP,PEXPL,PIMPL,PRHODJ,ZSOURCE,PTSTEP*ZFLX,ZRES)
+CALL GET_HALO(ZRES)
+!
+!* diagnose the dissipation
+!
+IF (LDIAG_IN_RUN) THEN
+  DO JK=IKTB,IKTE 
+    DO JJ=IJB,IJE 
+      DO JI=IIB,IIE 
+        XCURRENT_TKE_DISS(JI,JJ,JK) = ZFLX(JI,JJ,JK) * PTKEM(JI,JJ,JK) &
+        *(PEXPL*PTKEM(JI,JJ,JK) + PIMPL*ZRES(JI,JJ,JK))
+      ENDDO
+    ENDDO
+  ENDDO
+!
+  CALL ADD3DFIELD_ll( TZFIELDDISS_ll, XCURRENT_TKE_DISS, 'TKE_EPS_SOURCES::XCURRENT_TKE_DISS' )
+  CALL UPDATE_HALO_ll(TZFIELDDISS_ll,IINFO_ll)
+  CALL CLEANLIST_ll(TZFIELDDISS_ll)
+ENDIF
+!
+! TKE must be greater than its minimum value
+! CL : Now done at the end of the time step in ADVECTION_METSV for MesoNH
+IF(HPROGRAM/='MESONH') THEN
+  DO JK=IKTB,IKTE 
+    DO JJ=IJB,IJE 
+      DO JI=IIB,IIE 
+        GTKENEG(JI,JJ,JK) =  ZRES(JI,JJ,JK) <= CSTURB%XTKEMIN
+        IF ( GTKENEG(JI,JJ,JK) ) THEN
+          ZRES(JI,JJ,JK) = CSTURB%XTKEMIN
+        ENDIF
+      ENDDO
+    ENDDO
+  ENDDO
+END IF
+!
+DO JK=IKTB,IKTE 
+  DO JJ=IJB,IJE 
+    DO JI=IIB,IIE 
+      PTDISS(JI,JJ,JK) = - ZFLX(JI,JJ,JK)*(PEXPL*PTKEM(JI,JJ,JK) &
+      + PIMPL*ZRES(JI,JJ,JK))
+    ENDDO
+  ENDDO
+ENDDO
+!
+IF ( OLES_CALL .OR.                         &
+     (OTURB_DIAG .AND. TPFILE%LOPENED)  ) THEN
+!
+! Compute the cartesian vertical flux of TKE in ZFLX
+!
+  ZMWORK1 = MZM(ZKEFF, D%NKA, D%NKU, D%NKL)
+  ZDWORK1 = DZM(PIMPL * ZRES + PEXPL * PTKEM, D%NKA, D%NKU, D%NKL)
+  DO JK=IKTB,IKTE 
+    DO JJ=IJB,IJE 
+      DO JI=IIB,IIE 
+        ZFLX(JI,JJ,JK)  = - CSTURB%XCET * ZMWORK1(JI,JJ,JK) &
+        * ZDWORK1(JI,JJ,JK) / PDZZ(JI,JJ,JK)
+      ENDDO
+    ENDDO
+  ENDDO
+!
+  ZFLX(:,:,IKB) = 0.
+  ZFLX(:,:,D%NKA) = 0.
+!
+! Compute the whole turbulent TRansport of TKE:
+!
+  ZDWORK1 = DZF(MZM(PRHODJ, D%NKA, D%NKU, D%NKL) * ZFLX / PDZZ, D%NKA, D%NKU, D%NKL)
+  DO JK=IKTB,IKTE 
+    DO JJ=IJB,IJE 
+      DO JI=IIB,IIE 
+        ZTR(JI,JJ,JK)= ZTR(JI,JJ,JK) - ZDWORK1(JI,JJ,JK) &
+        /PRHODJ(JI,JJ,JK)
+      ENDDO
+    ENDDO
+  ENDDO
+!
+! Storage in the LES configuration
+!
+  IF (OLES_CALL) THEN
+    CALL LES_MEAN_SUBGRID(MZF(ZFLX, D%NKA, D%NKU, D%NKL), X_LES_SUBGRID_WTke )
+    CALL LES_MEAN_SUBGRID(-ZTR, X_LES_SUBGRID_ddz_WTke )
+  END IF
+!
+END IF
+!
+!*       2.4  stores the explicit sources for budget purposes
+!
+IF (BUCONF%LBUDGET_TKE) THEN
+  ! Dynamical production
+  CALL BUDGET_STORE_ADD( TBUDGETS(NBUDGET_TKE), 'DP', PDP(:,:,:) * PRHODJ(:,:,:) )
+  ! Thermal production
+  CALL BUDGET_STORE_ADD( TBUDGETS(NBUDGET_TKE), 'TP', PTP(:,:,:) * PRHODJ(:,:,:) )
+  ! Dissipation
+  CALL BUDGET_STORE_ADD( TBUDGETS(NBUDGET_TKE), 'DISS',- CSTURB%XCED * SQRT(PTKEM(:,:,:)) / PLEPS(:,:,:) * &
+                (PEXPL*PTKEM(:,:,:) + PIMPL*ZRES(:,:,:)) * PRHODJ(:,:,:))
+END IF 
+!
+!*       2.5  computes the final RTKE and stores the whole turbulent transport
+!              with the removal of the advection part for MesoNH
+
+!Store the previous source terms in prtkes before initializing the next one
+!Should be in IF LBUDGET_TKE only. Was removed out for a correct comput. of PTDIFF in case of LBUDGET_TKE=F in AROME
+DO JK=IKTB,IKTE 
+  DO JJ=IJB,IJE 
+    DO JI=IIB,IIE 
+      PRTKES(JI,JJ,JK) = PRTKES(JI,JJ,JK) + PRHODJ(JI,JJ,JK) * &
+      ( PDP(JI,JJ,JK) + PTP(JI,JJ,JK)                           &
+      - CSTURB%XCED * SQRT(PTKEM(JI,JJ,JK)) / PLEPS(JI,JJ,JK) &
+      * ( PEXPL*PTKEM(JI,JJ,JK) + PIMPL*ZRES(JI,JJ,JK) ) )
+!
+      PTDIFF(JI,JJ,JK) =  ZRES(JI,JJ,JK) / PTSTEP - PRTKES(JI,JJ,JK)&
+      /PRHODJ(JI,JJ,JK) &
+      & - PDP(JI,JJ,JK)- PTP(JI,JJ,JK) - PTDISS(JI,JJ,JK)
+    ENDDO
+  ENDDO
+ENDDO
+!
+IF (BUCONF%LBUDGET_TKE) CALL BUDGET_STORE_INIT( TBUDGETS(NBUDGET_TKE), 'TR', PRTKES(:, :, :) )
+!
+DO JK=IKTB,IKTE 
+  DO JJ=IJB,IJE 
+    DO JI=IIB,IIE 
+      PRTKES(JI,JJ,JK) = ZRES(JI,JJ,JK) * PRHODJ(JI,JJ,JK) / PTSTEP &
+      -  PRTKEMS(JI,JJ,JK)
+    ENDDO
+  ENDDO
+ENDDO
+!
+! stores the whole turbulent transport
+!
+IF (BUCONF%LBUDGET_TKE) CALL BUDGET_STORE_END( TBUDGETS(NBUDGET_TKE), 'TR', PRTKES(:, :, :) )
+!
+!----------------------------------------------------------------------------
+!
+!*       3.   COMPUTE THE DISSIPATIVE HEATING
+!             -------------------------------
+!
+DO JK=IKTB,IKTE 
+  DO JJ=IJB,IJE 
+    DO JI=IIB,IIE 
+      PRTHLS(JI,JJ,JK) = PRTHLS(JI,JJ,JK) + &
+      CSTURB%XCED * SQRT(PTKEM(JI,JJ,JK)) / PLEPS(JI,JJ,JK) * &
+      (PEXPL*PTKEM(JI,JJ,JK) + PIMPL*ZRES(JI,JJ,JK)) &
+      * PRHODJ(JI,JJ,JK) * PCOEF_DISS(JI,JJ,JK)
+    ENDDO
+  ENDDO
+ENDDO
+!----------------------------------------------------------------------------
+!
+!*       4.   STORES SOME DIAGNOSTICS
+!             -----------------------
+!
+IF(PRESENT(PTR)) PTR=ZTR
+IF(PRESENT(PDISS)) THEN
+  DO JK=IKTB,IKTE 
+    DO JJ=IJB,IJE 
+      DO JI=IIB,IIE 
+        PDISS(JI,JJ,JK) =  -CSTURB%XCED * (PTKEM(JI,JJ,JK)**1.5) / PLEPS(JI,JJ,JK)
+      ENDDO
+    ENDDO
+  ENDDO
+END IF
+!
+IF(PRESENT(PEDR)) THEN
+  DO JK=IKTB,IKTE 
+    DO JJ=IJB,IJE 
+      DO JI=IIB,IIE 
+        PEDR(JI,JJ,JK) = CSTURB%XCED * (PTKEM(JI,JJ,JK)**1.5) / PLEPS(JI,JJ,JK)
+      ENDDO
+    ENDDO
+  ENDDO
+END IF
+!
+IF ( OTURB_DIAG .AND. TPFILE%LOPENED ) THEN
+!
+! stores the dynamic production 
+!
+  TZFIELD%CMNHNAME   = 'DP'
+  TZFIELD%CSTDNAME   = ''
+  TZFIELD%CLONGNAME  = 'DP'
+  TZFIELD%CUNITS     = 'm2 s-3'
+  TZFIELD%CDIR       = 'XY'
+  TZFIELD%CCOMMENT   = 'X_Y_Z_DP'
+  TZFIELD%NGRID      = 1
+  TZFIELD%NTYPE      = TYPEREAL
+  TZFIELD%NDIMS      = 3
+  TZFIELD%LTIMEDEP   = .TRUE.
+  CALL IO_FIELD_WRITE(TPFILE,TZFIELD,PDP)
+!
+! stores the thermal production 
+!
+  TZFIELD%CMNHNAME   = 'TP'
+  TZFIELD%CSTDNAME   = ''
+  TZFIELD%CLONGNAME  = 'TP'
+  TZFIELD%CUNITS     = 'm2 s-3'
+  TZFIELD%CDIR       = 'XY'
+  TZFIELD%CCOMMENT   = 'X_Y_Z_TP'
+  TZFIELD%NGRID      = 1
+  TZFIELD%NTYPE      = TYPEREAL
+  TZFIELD%NDIMS      = 3
+  TZFIELD%LTIMEDEP   = .TRUE.
+  CALL IO_FIELD_WRITE(TPFILE,TZFIELD,PTP)
+!
+! stores the whole turbulent transport
+!
+  TZFIELD%CMNHNAME   = 'TR'
+  TZFIELD%CSTDNAME   = ''
+  TZFIELD%CLONGNAME  = 'TR'
+  TZFIELD%CUNITS     = 'm2 s-3'
+  TZFIELD%CDIR       = 'XY'
+  TZFIELD%CCOMMENT   = 'X_Y_Z_TR'
+  TZFIELD%NGRID      = 1
+  TZFIELD%NTYPE      = TYPEREAL
+  TZFIELD%NDIMS      = 3
+  TZFIELD%LTIMEDEP   = .TRUE.
+  CALL IO_FIELD_WRITE(TPFILE,TZFIELD,ZTR)
+!
+! stores the dissipation of TKE 
+!
+  TZFIELD%CMNHNAME   = 'DISS'
+  TZFIELD%CSTDNAME   = ''
+  TZFIELD%CLONGNAME  = 'DISS'
+  TZFIELD%CUNITS     = 'm2 s-3'
+  TZFIELD%CDIR       = 'XY'
+  TZFIELD%CCOMMENT   = 'X_Y_Z_DISS'
+  TZFIELD%NGRID      = 1
+  TZFIELD%NTYPE      = TYPEREAL
+  TZFIELD%NDIMS      = 3
+  TZFIELD%LTIMEDEP   = .TRUE.
+  CALL IO_FIELD_WRITE(TPFILE,TZFIELD,PDISS)
+END IF
+!
+! Storage in the LES configuration of the Dynamic Production of TKE and
+! the dissipation of TKE 
+! 
+IF (OLES_CALL ) THEN
+  CALL LES_MEAN_SUBGRID( PDISS, X_LES_SUBGRID_DISS_Tke )
+END IF
+!
+!----------------------------------------------------------------------------
+!
+IF (LHOOK) CALL DR_HOOK('TKE_EPS_SOURCES',1,ZHOOK_HANDLE)
+END SUBROUTINE TKE_EPS_SOURCES
+END MODULE MODE_TKE_EPS_SOURCES
