@@ -390,13 +390,8 @@ IF (OENTR_DETR) THEN
     ZSHEAR = 0. !no shear in bl89 mixing length
   END IF
   !
-#ifndef PHYEXMERGE
   CALL COMPUTE_BL89_ML(D, CST, CSTURB, PDZZ,ZTKEM_F(:,IKB),&
                       &ZG_O_THVREF(:,IKB),ZTHVM,IKB,GLMIX,.TRUE.,ZSHEAR,ZLUP)
-#else
-  CALL COMPUTE_BL89_ML(D, CST, CSTURB, PDZZ,ZTKEM_F(:,IKB),&
-                      &ZG_O_THVREF(:,IKB),ZTHVM,IKB,GLMIX,.FALSE.,ZSHEAR,ZLUP)
-#endif
   !$mnh_expand_where(JIJ=IIJB:IIJE)
   ZLUP(IIJB:IIJE)=MAX(ZLUP(IIJB:IIJE),1.E-10)
 
@@ -518,15 +513,10 @@ DO JK=IKB,IKE-IKL,IKL
       ZMIX2(JIJ) = (PZZ(JIJ,JK+IKL)-PZZ(JIJ,JK))*PENTR(JIJ,JK) !&
       ZMIX3_CLD(JIJ) = (PZZ(JIJ,JK+IKL)-PZZ(JIJ,JK))*(1.-ZPART_DRY(JIJ))*ZDETR_CLD(JIJ,JK) !&                   
       ZMIX2_CLD(JIJ) = (PZZ(JIJ,JK+IKL)-PZZ(JIJ,JK))*(1.-ZPART_DRY(JIJ))*ZENTR_CLD(JIJ,JK)
-#ifndef PHYEXMERGE
       PTHL_UP(JIJ,JK+IKL)=(PTHL_UP(JIJ,JK)*(1.-0.5*ZMIX2(JIJ)) + PTHLM(JIJ,JK)*ZMIX2(JIJ)) &
                             /(1.+0.5*ZMIX2(JIJ))   
       PRT_UP(JIJ,JK+IKL) =(PRT_UP (JIJ,JK)*(1.-0.5*ZMIX2(JIJ)) + PRTM(JIJ,JK)*ZMIX2(JIJ))  &
                             /(1.+0.5*ZMIX2(JIJ))
-#else
-      PTHL_UP(JIJ,JK+IKL)=PTHL_UP(JIJ,JK)*EXP(-ZMIX2(JIJ)) + PTHLM(JIJ,JK)*(1-EXP(-ZMIX2(JIJ)))
-      PRT_UP(JIJ,JK+IKL) =PRT_UP (JIJ,JK)*EXP(-ZMIX2(JIJ)) +  PRTM(JIJ,JK)*(1-EXP(-ZMIX2(JIJ)))
-#endif
     ENDIF
   ENDDO
   
