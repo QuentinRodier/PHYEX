@@ -311,7 +311,7 @@ REAL, DIMENSION(D%NIJT,D%NKT,KRR), INTENT(INOUT), OPTIONAL :: PFPR    ! upper-ai
 !
 CHARACTER(LEN=10) :: YSPE ! String for error message
 INTEGER                         :: JIJ, JK
-LOGICAL                         :: GPRESENT_PFPR
+LOGICAL                         :: GPRESENT_PFPR, GREMAINT
 REAL                            :: ZINVTSTEP
 REAL                            :: ZZWLBDC, ZRAY, ZZT, ZZWLBDA, ZZCC
 REAL                            :: ZLBDA
@@ -321,7 +321,7 @@ REAL, DIMENSION(D%NIJT)       :: ZMAX_TSTEP ! Maximum CFL in column
 REAL, DIMENSION(SIZE(ICED%XRTMIN))   :: ZRSMIN
 REAL, DIMENSION(D%NIJT)       :: ZREMAINT   ! Remaining time until the timestep end
 REAL, DIMENSION(D%NIJT, 0:D%NKT+1) :: ZWSED   ! Sedimentation fluxes
-INTEGER :: IKTB, IKTE, IKB, IKL, IIJE, IIJB
+INTEGER :: IKTB, IKTE, IKB, IKL, IIJE, IIJB, JIJ
 REAL(KIND=JPHOOK) :: ZHOOK_HANDLE
 IF (LHOOK) CALL DR_HOOK('ICE4_SEDIMENTATION_SPLIT:INTERNAL_SEDIM_SPLIT', 0, ZHOOK_HANDLE)
 !
@@ -346,7 +346,8 @@ ZRSMIN = ICED%XRTMIN * ZINVTSTEP
 ZREMAINT(:) = 0.
 ZREMAINT(IIJB:IIJE) = PTSTEP
 !
-DO WHILE (ANY(ZREMAINT>0.))
+GREMAINT = .TRUE.
+DO WHILE (GREMAINT)
   !
   !
   !*       1. Parameters for cloud sedimentation
@@ -441,6 +442,13 @@ DO WHILE (ANY(ZREMAINT>0.))
       ENDIF
     ENDDO
   ENDDO
+!
+  GREMAINT = .FALSE.
+  DO JIJ=IIJB,IIJE
+    IF(ZREMAINT(JIJ)>0.) THEN
+      GREMAINT = .TRUE.
+    END IF
+  END DO
 !
 END DO
 !
