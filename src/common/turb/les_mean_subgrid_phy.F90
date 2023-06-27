@@ -101,9 +101,29 @@ IMPLICIT NONE
 TYPE(DIMPHYEX_t),          INTENT(IN)    :: D
 TYPE(TLES_t),              INTENT(IN)    :: TLES
 REAL,     INTENT(IN)    :: PA
-REAL,     INTENT(INOUT) :: PA_MEAN
+REAL,     INTENT(INOUT) :: PA_MEAN(:,:,:)
 LOGICAL, OPTIONAL,         INTENT(IN)    :: OSUM
 !
 CALL ABORT !not used in AROME, build for automatic transformation
 END SUBROUTINE LES_MEAN_SUBGRID_0D_PHY
+!     ##############################################
+      SUBROUTINE LES_MEAN_SUBGRID_SURF_0D_PHY(D,TLES, PA, PA_MEAN, OSUM)
+!     ##############################################
+!
+!*      0. DECLARATIONS
+!          ------------
+!
+USE MODD_DIMPHYEX, ONLY: DIMPHYEX_t
+USE MODD_LES, ONLY: TLES_t
+!
+IMPLICIT NONE
+!
+TYPE(DIMPHYEX_t),          INTENT(IN)    :: D
+TYPE(TLES_t),              INTENT(IN)    :: TLES
+REAL,     INTENT(IN)    :: PA
+REAL,     INTENT(INOUT) :: PA_MEAN(:,:)
+LOGICAL, OPTIONAL,         INTENT(IN)    :: OSUM
+!
+CALL ABORT !not used in AROME
+END SUBROUTINE LES_MEAN_SUBGRID_SURF_0D_PHY
 
