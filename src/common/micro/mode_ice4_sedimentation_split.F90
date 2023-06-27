@@ -105,6 +105,16 @@ REAL, DIMENSION(D%NIJT, D%NKT)                                      :: ZCONC3D, 
                                                                      & ZRST, &
                                                                      & ZRGT, &
                                                                      & ZRHT
+CHARACTER(LEN=10) :: YSPE ! String for error message
+REAL                            :: ZZWLBDC, ZZT, ZZWLBDA, ZZCC
+REAL                            :: ZLBDA
+REAL                            :: ZFSED, ZEXSED
+REAL                                :: ZMRCHANGE
+REAL, DIMENSION(D%NIJT)       :: ZMAX_TSTEP ! Maximum CFL in column
+REAL, DIMENSION(SIZE(ICED%XRTMIN))   :: ZRSMIN
+REAL, DIMENSION(D%NIJT)       :: ZREMAINT   ! Remaining time until the timestep end
+REAL, DIMENSION(D%NIJT, 0:D%NKT+1) :: ZWSED   ! Sedimentation fluxes
+INTEGER :: IKB, IKL
 REAL(KIND=JPHOOK) :: ZHOOK_HANDLE
 !-------------------------------------------------------------------------------
 !

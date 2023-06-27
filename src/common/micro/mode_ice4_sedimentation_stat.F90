@@ -95,7 +95,11 @@ REAL, DIMENSION(D%NIJT) :: ZWSEDW1, ZWSEDW2 ! sedimentation speed
 REAL, DIMENSION(D%NIJT) :: ZTSORHODZ        ! TimeStep Over (Rhodref times delta Z)
 REAL, DIMENSION(D%NIJT,0:1,2:KRR) :: ZSED   ! sedimentation flux array for each species and for above and current levels
 REAL :: FWSED1, FWSED2, PWSEDW, PWSEDWSUP, PINVTSTEP, PTSTEP1, PDZZ1, PRHODREF1, PRXT1
-
+REAL :: ZLBC    ! XLBC weighted by sea fraction
+REAL :: ZFSEDC
+REAL :: ZCONC3D ! droplet condensation
+REAL :: ZRAY    ! Cloud Mean radius
+REAL :: ZZWLBDA, ZZWLBDC, ZZCC
 REAL(KIND=JPHOOK) :: ZHOOK_HANDLE
 !
 ! 5 multiplications + 1 division => cost = 7X
