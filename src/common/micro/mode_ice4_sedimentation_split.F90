@@ -321,7 +321,7 @@ REAL, DIMENSION(D%NIJT,D%NKT,KRR), INTENT(INOUT), OPTIONAL :: PFPR    ! upper-ai
 !
 CHARACTER(LEN=10) :: YSPE ! String for error message
 INTEGER                         :: JIJ, JK
-LOGICAL                         :: GPRESENT_PFPR, GREMAINT
+LOGICAL                         :: GPRESENT_PFPR
 REAL                            :: ZINVTSTEP
 REAL                            :: ZZWLBDC, ZRAY, ZZT, ZZWLBDA, ZZCC
 REAL                            :: ZLBDA
@@ -356,8 +356,8 @@ ZRSMIN = ICED%XRTMIN * ZINVTSTEP
 ZREMAINT(:) = 0.
 ZREMAINT(IIJB:IIJE) = PTSTEP
 !
-GREMAINT = .TRUE.
-DO WHILE (GREMAINT)
+ZREMAINT = .TRUE.
+DO WHILE (ZREMAINT)
   !
   !
   !*       1. Parameters for cloud sedimentation
@@ -453,10 +453,10 @@ DO WHILE (GREMAINT)
     ENDDO
   ENDDO
 !
-  GREMAINT = .FALSE.
+  ZREMAINT = .FALSE.
   DO JIJ=IIJB,IIJE
     IF(ZREMAINT(JIJ)>0.) THEN
-      GREMAINT = .TRUE.
+      ZREMAINT = .TRUE.
     END IF
   END DO
 !
