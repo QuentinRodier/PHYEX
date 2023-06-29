@@ -113,6 +113,7 @@ REAL                                :: ZMRCHANGE
 REAL, DIMENSION(D%NIJT)       :: ZMAX_TSTEP ! Maximum CFL in column
 REAL, DIMENSION(SIZE(ICED%XRTMIN))   :: ZRSMIN
 REAL, DIMENSION(D%NIJT)       :: ZREMAINT   ! Remaining time until the timestep end
+LOGICAL :: ZANYREMAINT ! ANY(ZREMAINT)
 REAL, DIMENSION(D%NIJT, 0:D%NKT+1) :: ZWSED   ! Sedimentation fluxes
 INTEGER :: IKB, IKL
 REAL(KIND=JPHOOK) :: ZHOOK_HANDLE
@@ -330,6 +331,7 @@ REAL                                :: ZMRCHANGE
 REAL, DIMENSION(D%NIJT)       :: ZMAX_TSTEP ! Maximum CFL in column
 REAL, DIMENSION(SIZE(ICED%XRTMIN))   :: ZRSMIN
 REAL, DIMENSION(D%NIJT)       :: ZREMAINT   ! Remaining time until the timestep end
+LOGICAL :: ZANYREMAINT ! ANY(ZREMAINT)
 REAL, DIMENSION(D%NIJT, 0:D%NKT+1) :: ZWSED   ! Sedimentation fluxes
 INTEGER :: IKTB, IKTE, IKB, IKL, IIJE, IIJB
 REAL(KIND=JPHOOK) :: ZHOOK_HANDLE
@@ -356,8 +358,8 @@ ZRSMIN = ICED%XRTMIN * ZINVTSTEP
 ZREMAINT(:) = 0.
 ZREMAINT(IIJB:IIJE) = PTSTEP
 !
-ZREMAINT = .TRUE.
-DO WHILE (ZREMAINT)
+ZANYREMAINT = .TRUE.
+DO WHILE (ZANYREMAINT)
   !
   !
   !*       1. Parameters for cloud sedimentation
@@ -453,10 +455,10 @@ DO WHILE (ZREMAINT)
     ENDDO
   ENDDO
 !
-  ZREMAINT = .FALSE.
+  ZANYREMAINT = .FALSE.
   DO JIJ=IIJB,IIJE
     IF(ZREMAINT(JIJ)>0.) THEN
-      ZREMAINT = .TRUE.
+      ZANYREMAINT = .TRUE.
     END IF
   END DO
 !
