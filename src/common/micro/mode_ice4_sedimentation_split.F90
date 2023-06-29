@@ -106,7 +106,7 @@ REAL, DIMENSION(D%NIJT, D%NKT)                                      :: ZCONC3D, 
                                                                      & ZRGT, &
                                                                      & ZRHT
 CHARACTER(LEN=10) :: YSPE ! String for error message
-REAL                            :: ZZWLBDC, ZZT, ZZWLBDA, ZZCC
+REAL                            :: ZZWLBDC, ZZT, ZZWLBDA, ZZCC, ZZRAY
 REAL                            :: ZLBDA
 REAL                            :: ZFSED, ZEXSED
 REAL                                :: ZMRCHANGE
@@ -323,7 +323,7 @@ CHARACTER(LEN=10) :: YSPE ! String for error message
 INTEGER                         :: JIJ, JK
 LOGICAL                         :: GPRESENT_PFPR
 REAL                            :: ZINVTSTEP
-REAL                            :: ZZWLBDC, ZRAY, ZZT, ZZWLBDA, ZZCC
+REAL                            :: ZZWLBDC, ZZRAY, ZZT, ZZWLBDA, ZZCC
 REAL                            :: ZLBDA
 REAL                            :: ZFSED, ZEXSED
 REAL                                :: ZMRCHANGE
@@ -375,10 +375,10 @@ DO WHILE (ZREMAINT)
           ZZWLBDC = PLBC(JIJ,JK) * PCONC3D(JIJ,JK) / &
                    &(PRHODREF(JIJ,JK) * PRXT(JIJ,JK))
           ZZWLBDC = ZZWLBDC**ICED%XLBEXC
-          ZRAY = PRAY(JIJ,JK) / ZZWLBDC
+          ZZRAY = PRAY(JIJ,JK) / ZZWLBDC
           ZZT = PTHT(JIJ,JK) * (PPABST(JIJ,JK)/CST%XP00)**(CST%XRD/CST%XCPD)
           ZZWLBDA = 6.6E-8*(101325./PPABST(JIJ,JK))*(ZZT/293.15)
-          ZZCC = ICED%XCC*(1.+1.26*ZZWLBDA/ZRAY)
+          ZZCC = ICED%XCC*(1.+1.26*ZZWLBDA/ZZRAY)
           ZWSED(JIJ, JK) = PRHODREF(JIJ,JK)**(-ICED%XCEXVT +1 ) *   &
                              &ZZWLBDC**(-ICED%XDC)*ZZCC*PFSEDC(JIJ,JK) * PRXT(JIJ,JK)
         ENDIF
