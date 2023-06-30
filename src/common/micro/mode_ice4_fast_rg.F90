@@ -104,7 +104,8 @@ REAL, DIMENSION(KPROMA) :: ZZW, &
                            ZRWETG_INIT !Initial wet growth rate of the graupeln
 REAL :: ZZW0D
 INTEGER :: JL
-
+INTEGER :: IINDEX,IINDEX1, IINDEX2
+REAL :: ZINDEX,ZINDEX1, ZINDEX2
 REAL(KIND=JPHOOK) :: ZHOOK_HANDLE
 !-------------------------------------------------------------------------------
 !
