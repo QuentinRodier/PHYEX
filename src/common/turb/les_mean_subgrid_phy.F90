@@ -121,7 +121,7 @@ IMPLICIT NONE
 TYPE(DIMPHYEX_t),          INTENT(IN)    :: D
 TYPE(TLES_t),              INTENT(IN)    :: TLES
 REAL,     INTENT(IN)    :: PA
-REAL,     INTENT(INOUT) :: PA_MEAN(:,:)
+REAL,     INTENT(INOUT) :: PA_MEAN(:)
 LOGICAL, OPTIONAL,         INTENT(IN)    :: OSUM
 !
 CALL ABORT !not used in AROME
