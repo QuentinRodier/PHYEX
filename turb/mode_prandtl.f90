@@ -155,6 +155,12 @@ USE MODE_ETHETA,         ONLY: ETHETA
 USE MODE_GRADIENT_M_PHY, ONLY: GX_M_M_PHY, GY_M_M_PHY
 USE MODE_IO_FIELD_WRITE_PHY, ONLY: IO_FIELD_WRITE_PHY
 !
+! These macro are handled by pft_tool.py --craybyPassDOCONCURRENT applied on Cray Rules
+#ifdef MNH_COMPILER_CCE
+!$mnh_undef(LOOP)
+!$mnh_undef(OPENACC)
+#endif
+!
 IMPLICIT NONE
 !
 !
@@ -177,7 +183,7 @@ LOGICAL,                INTENT(IN)   ::  OCOMPUTE_SRC ! flag to define dimension
 LOGICAL,                INTENT(IN)   :: O2D           ! Logical for 2D model version (modd_conf)
 LOGICAL,                INTENT(IN)   ::  OFLAT        ! Logical for zero ororography
 CHARACTER(LEN=4),       INTENT(IN)   ::  HTURBDIM     ! Kind of turbulence param.
-TYPE(TFILEDATA),        INTENT(IN)   ::  TPFILE       ! Output file
+TYPE(TFILEDATA),        INTENT(INOUT)   ::  TPFILE       ! Output file
 REAL, DIMENSION(D%NIJT,D%NKT), INTENT(IN)   ::  PDXX,PDYY,PDZZ,PDZX,PDZY
                                                   ! metric coefficients
 !
@@ -262,10 +268,12 @@ CALL ETHETA(D,CST,KRR,KRRI,PTHLM,PRM,PLOCPEXNM,PATHETA,PSRCM,OOCEAN,OCOMPUTE_SRC
 CALL EMOIST(D,CST,KRR,KRRI,PTHLM,PRM,PLOCPEXNM,PAMOIST,PSRCM,OOCEAN,ZWORK2)
 CALL MZM_PHY(D,ZWORK1,PETHETA)
 CALL MZM_PHY(D,ZWORK2,PEMOIST)
+!$acc kernels
 !$mnh_expand_array(JIJ=IIJB:IIJE)
 PETHETA(:,IKA) = 2.*PETHETA(:,IKB) - PETHETA(:,IKB+IKL)
 PEMOIST(:,IKA) = 2.*PEMOIST(:,IKB) - PEMOIST(:,IKB+IKL)
 !$mnh_end_expand_array(JIJ=IIJB:IIJE)
+!$acc end kernels
 !
 !---------------------------------------------------------------------------
 IF (.NOT. OHARAT) THEN
@@ -273,39 +281,50 @@ IF (.NOT. OHARAT) THEN
 !          1.3 1D Redelsperger numbers
 !
 IF (OOCEAN) THEN
+!$acc kernels
   !$mnh_expand_array(JIJ=IIJB:IIJE,JK=1:IKT)
   ZWORK1(:,:) = CST%XG * CST%XALPHAOC * PLM(:,:) & 
                                     * PLEPS(:,:) / PTKEM(:,:)
   !$mnh_end_expand_array(JIJ=IIJB:IIJE,JK=1:IKT)
+!$acc end kernels
 ELSE
+!$acc kernels
   !$mnh_expand_array(JIJ=IIJB:IIJE,JK=1:IKT)
   ZWORK1(:,:) = CST%XG / PTHVREF(:,:) * PLM(:,:) & 
                                     * PLEPS(:,:) / PTKEM(:,:)
   !$mnh_end_expand_array(JIJ=IIJB:IIJE,JK=1:IKT)
+!$acc end kernels
 END IF
 !
 CALL MZM_PHY(D,ZWORK1,PBLL_O_E)
 CALL GZ_M_W_PHY(D,PTHLM,PDZZ,ZWORK1)
 !
 IF (OOCEAN) THEN
+!$acc kernels
   !$mnh_expand_array(JIJ=IIJB:IIJE,JK=1:IKT)
   PREDTH1(:,:)= TURBN%XCTV*PBLL_O_E(:,:)*ZWORK1(:,:)
   !$mnh_end_expand_array(JIJ=IIJB:IIJE,JK=1:IKT)
   PREDR1(:,:) = 0.
+!$acc end kernels
 ELSE
   IF (KRR /= 0) THEN                ! moist case
     CALL GZ_M_W_PHY(D,PRM(:,:,1),PDZZ,ZWORK2)
+!$acc kernels
     !$mnh_expand_array(JIJ=IIJB:IIJE,JK=1:IKT)
     PREDTH1(:,:)= TURBN%XCTV*PBLL_O_E(:,:) * PETHETA(:,:) &
                                       * ZWORK1(:,:)
     PREDR1(:,:) = TURBN%XCTV*PBLL_O_E(:,:) * PEMOIST(:,:) &
                                       * ZWORK2(:,:)
     !$mnh_end_expand_array(JIJ=IIJB:IIJE,JK=1:IKT)
-  ELSE                              ! dry case
+!$acc end kernels
+  ELSE    
+                          ! dry case
+!$acc kernels
     !$mnh_expand_array(JIJ=IIJB:IIJE,JK=1:IKT)
     PREDTH1(:,:)= TURBN%XCTV*PBLL_O_E(:,:)  * ZWORK1(:,:)
     PREDR1(:,:) = 0.
     !$mnh_end_expand_array(JIJ=IIJB:IIJE,JK=1:IKT)
+!$acc end kernels
   END IF
 END IF
 !
@@ -314,54 +333,54 @@ END IF
 !
 ZMINVAL = (1.-1./CSTURB%XPHI_LIM)
 !
-DO JK=1,IKT 
-  DO JIJ=IIJB,IIJE 
-   ZW1(JIJ,JK) = 1.
-   ZW2(JIJ,JK) = 1.
+!$acc kernels present(ZW1,ZW2)
+!$mnh_expand_array(JIJ=IIJB:IIJE,JK=1:IKT)
+   ZW1(:,:) = 1.
+   ZW2(:,:) = 1.
    !
-   IF (PREDTH1(JIJ,JK)+PREDR1(JIJ,JK)<-ZMINVAL)THEN
-    ZW1(JIJ,JK) = (-ZMINVAL) / (PREDTH1(JIJ,JK)+PREDR1(JIJ,JK))
+   IF (PREDTH1(:,:)+PREDR1(:,:)<-ZMINVAL)THEN
+    ZW1(:,:) = (-ZMINVAL) / (PREDTH1(:,:)+PREDR1(:,:))
    ENDIF
    !
-   IF (PREDTH1(JIJ,JK)<-ZMINVAL)THEN
-    ZW2(JIJ,JK) = (-ZMINVAL) / (PREDTH1(JIJ,JK))
+   IF (PREDTH1(:,:)<-ZMINVAL)THEN
+    ZW2(:,:) = (-ZMINVAL) / (PREDTH1(:,:))
    ENDIF
-   ZW2(JIJ,JK) = MIN(ZW1(JIJ,JK),ZW2(JIJ,JK))
+   ZW2(:,:) = MIN(ZW1(:,:),ZW2(:,:))
    !
-   ZW1(JIJ,JK) = 1.
-   IF (PREDR1(JIJ,JK)<-ZMINVAL)THEN
-    ZW1(JIJ,JK) = (-ZMINVAL) / (PREDR1(JIJ,JK))
+   ZW1(:,:) = 1.
+   IF (PREDR1(:,:)<-ZMINVAL)THEN
+    ZW1(:,:) = (-ZMINVAL) / (PREDR1(:,:))
    ENDIF
-   ZW1(JIJ,JK) = MIN(ZW2(JIJ,JK),ZW1(JIJ,JK))
+   ZW1(:,:) = MIN(ZW2(:,:),ZW1(:,:))
    !
    !
    !       3. Modification of Mixing length and dissipative length
    !          ----------------------------------------------------
    !
-   PBLL_O_E(JIJ,JK) = PBLL_O_E(JIJ,JK) * ZW1(JIJ,JK)
-   PREDTH1(JIJ,JK)  = PREDTH1(JIJ,JK)  * ZW1(JIJ,JK)
-   PREDR1(JIJ,JK)   = PREDR1(JIJ,JK)   * ZW1(JIJ,JK)
+   PBLL_O_E(:,:) = PBLL_O_E(:,:) * ZW1(:,:)
+   PREDTH1(:,:)  = PREDTH1(:,:)  * ZW1(:,:)
+   PREDR1(:,:)   = PREDR1(:,:)   * ZW1(:,:)
    !
    !       4. Threshold for very small (in absolute value) Redelperger numbers
    !          ----------------------------------------------------------------
    !
-   IF(PREDTH1(JIJ,JK) < 0.) THEN
-    ZW2(JIJ,JK)=-1.
+   IF(PREDTH1(:,:) < 0.) THEN
+    ZW2(:,:)=-1.
    ELSE
-    ZW2(JIJ,JK)=1.
+    ZW2(:,:)=1.
    END IF
-   PREDTH1(JIJ,JK)= ZW2(JIJ,JK) * MAX(CST%XMNH_TINY_12, ZW2(JIJ,JK)*PREDTH1(JIJ,JK))
+   PREDTH1(:,:)= ZW2(:,:) * MAX(CST%XMNH_TINY_12, ZW2(:,:)*PREDTH1(:,:))
    !
    IF (KRR /= 0) THEN                ! moist case
-    IF(PREDR1(JIJ,JK) < 0.) THEN
-     ZW2(JIJ,JK)=-1.
+    IF(PREDR1(:,:) < 0.) THEN
+     ZW2(:,:)=-1.
     ELSE
-     ZW2(JIJ,JK)=1.
+     ZW2(:,:)=1.
     END IF
-    PREDR1(JIJ,JK)= ZW2(JIJ,JK) * MAX(CST%XMNH_TINY_12, ZW2(JIJ,JK)*PREDR1(JIJ,JK))
+    PREDR1(:,:)= ZW2(:,:) * MAX(CST%XMNH_TINY_12, ZW2(:,:)*PREDR1(:,:))
    END IF
-  ENDDO
-ENDDO
+!$mnh_end_expand_array(JIJ=IIJB:IIJE,JK=1:IKT)
+!$acc end kernels
 !
 !
 !---------------------------------------------------------------------------
@@ -369,11 +388,14 @@ ENDDO
 !          For the scalar variables
 DO JSV=1,KSV
   CALL GZ_M_W_PHY(D,PSVM(:,:,JSV),PDZZ,ZWORK1)
+!$acc kernels
   !$mnh_expand_array(JIJ=IIJB:IIJE,JK=1:IKT)
   PREDS1(:,:,JSV)=TURBN%XCTV*PBLL_O_E(:,:)*ZWORK1(:,:)
   !$mnh_end_expand_array(JIJ=IIJB:IIJE,JK=1:IKT)
+!$acc end kernels
 END DO
 !
+!$acc kernels present_cr(ZW2)
 DO JSV=1,KSV
  DO JK=1,IKT 
    DO JIJ=IIJB,IIJE 
@@ -386,6 +408,7 @@ DO JSV=1,KSV
    ENDDO
  ENDDO
 ENDDO
+!$acc end kernels
 !
 !---------------------------------------------------------------------------
 !
@@ -395,6 +418,7 @@ ENDDO
 IF(HTURBDIM=='1DIM') THEN        ! 1D case
 !
 !
+!$acc kernels
   !$mnh_expand_array(JIJ=IIJB:IIJE,JK=1:IKT)
   PRED2TH3(:,:)  = PREDTH1(:,:)**2
 !
@@ -402,27 +426,35 @@ IF(HTURBDIM=='1DIM') THEN        ! 1D case
 !
   PRED2THR3(:,:) = PREDTH1(:,:) * PREDR1(:,:)
   !$mnh_end_expand_array(JIJ=IIJB:IIJE,JK=1:IKT)
+!$acc end kernels
 !
 ELSE IF (O2D) THEN                      ! 3D case in a 2D model
 !
     CALL GX_M_M_PHY(D,OFLAT,PTHLM,PDXX,PDZZ,PDZX,ZGXMM_PTH)
+!$acc kernels
     !$mnh_expand_array(JIJ=IIJB:IIJE,JK=1:IKT)
     ZWORK1(:,:) = ZGXMM_PTH(:,:)**2
     !$mnh_end_expand_array(JIJ=IIJB:IIJE,JK=1:IKT)
+!$acc end kernels
     CALL MZM_PHY(D,ZWORK1,ZWORK2)
     !
   IF (KRR /= 0) THEN                 ! moist 3D case
     CALL GX_M_M_PHY(D,OFLAT,PRM(:,:,1),PDXX,PDZZ,PDZX,ZGXMM_PRM)
+!$acc kernels
     !$mnh_expand_array(JIJ=IIJB:IIJE,JK=1:IKT)
     ZWORK1(:,:) = ZGXMM_PRM(:,:)**2
     !$mnh_end_expand_array(JIJ=IIJB:IIJE,JK=1:IKT)
+!$acc end kernels
     CALL MZM_PHY(D,ZWORK1,ZWORK3)
     !
+!$acc kernels
     !$mnh_expand_array(JIJ=IIJB:IIJE,JK=1:IKT)
     ZWORK1(:,:) = ZGXMM_PTH(:,:) * ZGXMM_PRM(:,:)
     !$mnh_end_expand_array(JIJ=IIJB:IIJE,JK=1:IKT)
+!$acc end kernels
     CALL MZM_PHY(D,ZWORK1,ZWORK4)
     !
+!$acc kernels
     !$mnh_expand_array(JIJ=IIJB:IIJE,JK=1:IKT)
     PRED2TH3(:,:)= PREDTH1(:,:)**2+(TURBN%XCTV*PBLL_O_E(:,:) &
                                        *PETHETA(:,:) )**2 * ZWORK2(:,:)
@@ -439,8 +471,10 @@ ELSE IF (O2D) THEN                      ! 3D case in a 2D model
     PRED2TH3(:,IKB)=PRED2TH3(:,IKB+IKL)
     PRED2R3(:,IKB)=PRED2R3(:,IKB+IKL) 
     PRED2THR3(:,IKB)=PRED2THR3(:,IKB+IKL)
+!$acc end kernels
 !
   ELSE                 ! dry 3D case in a 2D model
+!$acc kernels
     !$mnh_expand_array(JIJ=IIJB:IIJE,JK=1:IKT)
     PRED2TH3(:,:) = PREDTH1(:,:)**2 +  TURBN%XCTV**2 & 
                                        * PBLL_O_E(:,:)**2 * ZWORK2(:,:)      
@@ -450,6 +484,7 @@ ELSE IF (O2D) THEN                      ! 3D case in a 2D model
     PRED2R3(:,:) = 0.
 !
     PRED2THR3(:,:) = 0.
+!$acc end kernels
 !
   END IF
 !
@@ -457,25 +492,32 @@ ELSE                                 ! 3D case in a 3D model
 !
   CALL GX_M_M_PHY(D,OFLAT,PTHLM,PDXX,PDZZ,PDZX,ZGXMM_PTH)
   CALL GY_M_M_PHY(D,OFLAT,PTHLM,PDYY,PDZZ,PDZY,ZGYMM_PTH)
+!$acc kernels
   !$mnh_expand_array(JIJ=IIJB:IIJE,JK=1:IKT)
   ZWORK1(:,:) = ZGXMM_PTH(:,:)**2 + ZGYMM_PTH(:,:)**2
   !$mnh_end_expand_array(JIJ=IIJB:IIJE,JK=1:IKT)
+!$acc end kernels
   CALL MZM_PHY(D,ZWORK1,ZWORK2)
   !
   IF (KRR /= 0) THEN                 ! moist 3D case
     CALL GX_M_M_PHY(D,OFLAT,PRM(:,:,1),PDXX,PDZZ,PDZX,ZGXMM_PRM)
     CALL GY_M_M_PHY(D,OFLAT,PRM(:,:,1),PDYY,PDZZ,PDZY,ZGYMM_PRM)
+!$acc kernels
     !$mnh_expand_array(JIJ=IIJB:IIJE,JK=1:IKT)
     ZWORK1(:,:) = ZGXMM_PRM(:,:)**2 + ZGYMM_PRM(:,:)**2
     !$mnh_end_expand_array(JIJ=IIJB:IIJE,JK=1:IKT)
+!$acc end kernels
     CALL MZM_PHY(D,ZWORK1,ZWORK3)
     !
+!$acc kernels
     !$mnh_expand_array(JIJ=IIJB:IIJE,JK=1:IKT)
     ZWORK1(:,:) = ZGXMM_PRM(:,:) * ZGXMM_PTH(:,:) &
                                     + ZGYMM_PRM(:,:) * ZGYMM_PTH(:,:)
     !$mnh_end_expand_array(JIJ=IIJB:IIJE,JK=1:IKT)
+!$acc end kernels
     CALL MZM_PHY(D,ZWORK1,ZWORK4)
     !
+!$acc kernels
     !$mnh_expand_array(JIJ=IIJB:IIJE,JK=1:IKT)
     PRED2TH3(:,:)= PREDTH1(:,:)**2 +  ( TURBN%XCTV*PBLL_O_E(:,:) &
                                       * PETHETA(:,:) )**2 * ZWORK2(:,:)      
@@ -492,8 +534,10 @@ ELSE                                 ! 3D case in a 3D model
     PRED2TH3(:,IKB)=PRED2TH3(:,IKB+IKL)
     PRED2R3(:,IKB)=PRED2R3(:,IKB+IKL)
     PRED2THR3(:,IKB)=PRED2THR3(:,IKB+IKL)
+!$acc end kernels
 !
   ELSE                 ! dry 3D case in a 3D model
+!$acc kernels
     !$mnh_expand_array(JIJ=IIJB:IIJE,JK=1:IKT)
     PRED2TH3(:,:) = PREDTH1(:,:)**2 + TURBN%XCTV**2 &
                                         * PBLL_O_E(:,:)**2 * ZWORK2(:,:)
@@ -505,6 +549,7 @@ ELSE                                 ! 3D case in a 3D model
 !
     PRED2THR3(:,:) = 0.
 !
+!$acc end kernels
   END IF
 !
 END IF   ! end of the if structure on the turbulence dimensionnality
@@ -518,6 +563,7 @@ DO JSV=1,KSV
 !
   IF(HTURBDIM=='1DIM') THEN
 !        1D case
+!$acc kernels
     !$mnh_expand_array(JIJ=IIJB:IIJE,JK=1:IKT)
     PRED2THS3(:,:,JSV)  = PREDS1(:,:,JSV) * PREDTH1(:,:)
     IF (KRR /= 0) THEN
@@ -526,6 +572,7 @@ DO JSV=1,KSV
       PRED2RS3(:,:,JSV)   = 0.
     END IF
     !$mnh_end_expand_array(JIJ=IIJB:IIJE,JK=1:IKT)
+!$acc end kernels
 !
   ELSE  IF (O2D) THEN ! 3D case in a 2D model
 !
@@ -545,20 +592,25 @@ DO JSV=1,KSV
     ELSE
       !Compute only once and reuse in next JSV iterations
       IF ( JSV == 1 ) THEN
+!$acc kernels
         !$mnh_expand_array(JIJ=IIJB:IIJE,JK=1:IKT)
         ZWORK1(:,:) = (CST%XG / PTHVREF(:,:) * PLM(:,:) * PLEPS(:,:) / PTKEM(:,:))**2
         !$mnh_end_expand_array(JIJ=IIJB:IIJE,JK=1:IKT)
+!$acc end kernels
         CALL MZM_PHY(D,ZWORK1,ZW1)
       END IF
       !
       CALL GX_M_M_PHY(D,OFLAT,PSVM(:,:,JSV),PDXX,PDZZ,PDZX,ZGXMM_PSV)
       !Already computed CALL GX_M_M_PHY(D,OFLAT,PTHLM,PDXX,PDZZ,PDZX,ZGXMM_PTH)
       !
+!$acc kernels
       !$mnh_expand_array(JIJ=IIJB:IIJE,JK=1:IKT)
       ZWORK1(:,:) = ZGXMM_PSV(:,:) * ZGXMM_PTH(:,:)
       !$mnh_end_expand_array(JIJ=IIJB:IIJE,JK=1:IKT)
+!$acc end kernels
       CALL MZM_PHY(D,ZWORK1,ZWORK2)
       !
+!$acc kernels
       !$mnh_expand_array(JIJ=IIJB:IIJE,JK=1:IKT)    
       IF (KRR /= 0) THEN
         ZWORK1(:,:) = ZW1(:,:)*PETHETA(:,:)
@@ -568,23 +620,30 @@ DO JSV=1,KSV
       PRED2THS3(:,:,JSV) = PREDTH1(:,:) * PREDS1(:,:,JSV)   +        &
                          ZWORK1(:,:) * ZWORK2(:,:)
       !$mnh_end_expand_array(JIJ=IIJB:IIJE,JK=1:IKT)
+!$acc end kernels
       !
       IF (KRR /= 0) THEN
         !Already computed CALL GX_M_M_PHY(D,OFLAT,PRM(:,:,1),PDXX,PDZZ,PDZX,ZGXMM_PRM)
         !
+!$acc kernels
         !$mnh_expand_array(JIJ=IIJB:IIJE,JK=1:IKT)
         ZWORK1(:,:) = ZGXMM_PSV(:,:) * ZGXMM_PRM(:,:)
         !$mnh_end_expand_array(JIJ=IIJB:IIJE,JK=1:IKT)
+!$acc end kernels
         CALL MZM_PHY(D,ZWORK1,ZWORK3)
         !
+!$acc kernels
         !$mnh_expand_array(JIJ=IIJB:IIJE,JK=1:IKT)
         PRED2RS3(:,:,JSV) = PREDR1(:,:) * PREDS1(:,:,JSV)   +        &
                          ZW1(:,:) * PEMOIST(:,:) * ZWORK3(:,:)
         !$mnh_end_expand_array(JIJ=IIJB:IIJE,JK=1:IKT)
+!$acc end kernels
       ELSE
+!$acc kernels
         !$mnh_expand_array(JIJ=IIJB:IIJE,JK=1:IKT)
         PRED2RS3(:,:,JSV) = 0.
         !$mnh_end_expand_array(JIJ=IIJB:IIJE,JK=1:IKT)
+!$acc end kernels
       END IF
     END IF
 !
@@ -606,9 +665,11 @@ DO JSV=1,KSV
     ELSE
       !Compute only once and reuse in next JSV iterations
       IF ( JSV == 1 ) THEN
+!$acc kernels
         !$mnh_expand_array(JIJ=IIJB:IIJE,JK=1:IKT)
         ZWORK1(:,:) = (CST%XG / PTHVREF(:,:) * PLM(:,:) * PLEPS(:,:) / PTKEM(:,:))**2
         !$mnh_end_expand_array(JIJ=IIJB:IIJE,JK=1:IKT)
+!$acc end kernels
         CALL MZM_PHY(D,ZWORK1,ZW1)
       END IF
       !
@@ -617,38 +678,54 @@ DO JSV=1,KSV
       CALL GY_M_M_PHY(D,OFLAT,PSVM(:,:,JSV),PDYY,PDZZ,PDZY,ZGYMM_PSV)
       !Already computed CALL GY_M_M_PHY(D,OFLAT,PTHLM,PDYY,PDZZ,PDZY,ZGYMM_PTH)
       !
+!$acc kernels
       !$mnh_expand_array(JIJ=IIJB:IIJE,JK=1:IKT)
       ZWORK1(:,:) = ZGXMM_PSV(:,:) * ZGXMM_PTH(:,:) &
                                       + ZGYMM_PSV(:,:) * ZGYMM_PTH(:,:)
       !$mnh_end_expand_array(JIJ=IIJB:IIJE,JK=1:IKT)
+!$acc end kernels
       CALL MZM_PHY(D,ZWORK1,ZWORK2)
       !
       IF (KRR /= 0) THEN
         !Already computed CALL GX_M_M_PHY(D,OFLAT,PRM(:,:,1),PDXX,PDZZ,PDZX,ZGXMM_PRM)
         !Already computed CALL GY_M_M_PHY(D,OFLAT,PRM(:,:,1),PDYY,PDZZ,PDZY,ZGYMM_PRM)
         !
+!$acc kernels
         !$mnh_expand_array(JIJ=IIJB:IIJE,JK=1:IKT)
         ZWORK1(:,:) = ZGXMM_PSV(:,:) * ZGXMM_PRM(:,:) + ZGYMM_PSV(:,:) * ZGYMM_PRM(:,:)
         !$mnh_end_expand_array(JIJ=IIJB:IIJE,JK=1:IKT)
+!$acc end kernels
         CALL MZM_PHY(D,ZWORK1,ZWORK3)
         !
+!$acc kernels
         !$mnh_expand_array(JIJ=IIJB:IIJE,JK=1:IKT)
         ZWORK1(:,:) = ZW1(:,:)*PETHETA(:,:)
         !$mnh_end_expand_array(JIJ=IIJB:IIJE,JK=1:IKT)
+!$acc end kernels
       ELSE
+!$acc kernels
+        !$mnh_expand_array(JIJ=IIJB:IIJE,JK=1:IKT)
         ZWORK1(:,:) = ZW1(:,:)
+        !$mnh_end_expand_array(JIJ=IIJB:IIJE,JK=1:IKT)
+!$acc end kernels
       END IF
+!$acc kernels
       !$mnh_expand_array(JIJ=IIJB:IIJE,JK=1:IKT)
       PRED2THS3(:,:,JSV) = PREDTH1(:,:) * PREDS1(:,:,JSV)   +        &
                          ZWORK1(:,:)*ZWORK2(:,:)
       !$mnh_end_expand_array(JIJ=IIJB:IIJE,JK=1:IKT)
+!$acc end kernels
       IF (KRR /= 0) THEN
+!$acc kernels
         !$mnh_expand_array(JIJ=IIJB:IIJE,JK=1:IKT)
         PRED2RS3(:,:,JSV) = PREDR1(:,:) * PREDS1(:,:,JSV)   +        &
                          ZW1(:,:) * PEMOIST(:,:) * ZWORK3(:,:)
         !$mnh_end_expand_array(JIJ=IIJB:IIJE,JK=1:IKT)
+!$acc end kernels
       ELSE
+!$acc kernels
         PRED2RS3(:,:,JSV) = 0.
+!$acc end kernels
       END IF
   END IF 
 !
@@ -764,12 +841,14 @@ IIJB=D%NIJB
 IKT=D%NKT
 !
 IF(TURBN%LSMOOTH_PRANDTL) THEN
+!$acc kernels
   !$mnh_expand_array(JIJ=IIJB:IIJE,JK=1:IKT)    
   ZCOEF(:,:) = MAX(MIN((  10.*(1.-PPHI3(:,:)/CSTURB%XPHI_LIM)) ,1.), 0.) 
   !
   PF(:,:) =     ZCOEF(:,:)   * PF(:,:)    &
             + (1.-ZCOEF(:,:))  * PF_LIM(:,:)
   !$mnh_end_expand_array(JIJ=IIJB:IIJE,JK=1:IKT)    
+!$acc end kernels
 ENDIF
 !
 END SUBROUTINE SMOOTH_TURB_FUNCT
@@ -798,6 +877,7 @@ IIJE=D%NIJE
 IIJB=D%NIJB
 IKT=D%NKT
 !
+!$acc kernels present(PPHI3)
 IF (HTURBDIM=='3DIM') THEN
         !* 3DIM case
   !$mnh_expand_array(JIJ=IIJB:IIJE,JK=1:IKT)    
@@ -844,6 +924,7 @@ END IF
 !
 PPHI3(:,IKB-1)=PPHI3(:,IKB)
 PPHI3(:,IKE+1)=PPHI3(:,IKE)
+!$acc end kernels
 !
 IF (LHOOK) CALL DR_HOOK('MODE_PRANDTL:PHI3',1,ZHOOK_HANDLE)
 END SUBROUTINE PHI3
@@ -873,6 +954,7 @@ IIJE=D%NIJE
 IIJB=D%NIJB
 IKT=D%NKT
 !
+!$acc kernels
 DO JSV=1,KSV
   !$mnh_expand_array(JIJ=IIJB:IIJE,JK=1:IKT)    
   PPSI_SV(:,:,JSV) = ( 1.                                             &
@@ -900,6 +982,7 @@ DO JSV=1,KSV
   PPSI_SV(:,IKB-1,JSV)=PPSI_SV(:,IKB,JSV)
   PPSI_SV(:,IKE+1,JSV)=PPSI_SV(:,IKE,JSV)
 END DO
+!$acc end kernels
 !
 IF (LHOOK) CALL DR_HOOK('MODE_PRANDTL:PSI_SV',1,ZHOOK_HANDLE)
 END SUBROUTINE PSI_SV
@@ -926,6 +1009,7 @@ IIJE=D%NIJE
 IIJB=D%NIJB
 IKT=D%NKT
 !
+!$acc kernels
 IF (HTURBDIM=='3DIM') THEN
         !* 3DIM case
   IF (OUSERV) THEN
@@ -977,12 +1061,15 @@ DO JK=1,IKT
   ENDDO
 ENDDO
 END IF
+!$acc end kernels
 !
 !* smoothing
 CALL SMOOTH_TURB_FUNCT(D,CSTURB,TURBN,PPHI3,PPHI3,PD_PHI3DTDZ_O_DDTDZ)
 !
+!$acc kernels
 PD_PHI3DTDZ_O_DDTDZ(:,IKB-1)=PD_PHI3DTDZ_O_DDTDZ(:,IKB)
 PD_PHI3DTDZ_O_DDTDZ(:,IKE+1)=PD_PHI3DTDZ_O_DDTDZ(:,IKE)
+!$acc end kernels
 !
 IF (LHOOK) CALL DR_HOOK('MODE_PRANDTL:D_PHI3DTDZ_O_DDTDZ',1,ZHOOK_HANDLE)
 END SUBROUTINE D_PHI3DTDZ_O_DDTDZ
@@ -1010,6 +1097,7 @@ IIJB=D%NIJB
 IKT=D%NKT
 !
 !
+!$acc kernels
 IF (HTURBDIM=='3DIM') THEN
         !* 3DIM case
   IF (OUSERV) THEN
@@ -1044,12 +1132,15 @@ ELSE
   END WHERE
   !$mnh_end_expand_where(JIJ=IIJB:IIJE,JK=1:IKT)    
 END IF
+!$acc end kernels
 !
 !* smoothing
 CALL SMOOTH_TURB_FUNCT(D,CSTURB,TURBN,PPHI3,PPHI3,PD_PHI3DRDZ_O_DDRDZ)
 !
+!$acc kernels
 PD_PHI3DRDZ_O_DDRDZ(:,IKB-1)=PD_PHI3DRDZ_O_DDRDZ(:,IKB)
 PD_PHI3DRDZ_O_DDRDZ(:,IKE+1)=PD_PHI3DRDZ_O_DDRDZ(:,IKE)
+!$acc end kernels
 !
 IF (LHOOK) CALL DR_HOOK('MODE_PRANDTL:D_PHI3DRDZ_O_DDRDZ',1,ZHOOK_HANDLE)
 END SUBROUTINE D_PHI3DRDZ_O_DDRDZ
@@ -1082,12 +1173,15 @@ IKT=D%NKT
 IF (HTURBDIM=='3DIM') THEN
    ! by derivation of (phi3 dtdz) * dtdz according to dtdz we obtain:
    CALL D_PHI3DTDZ_O_DDTDZ(D,CSTURB,TURBN,PPHI3,PREDTH1,PREDR1,PRED2TH3,PRED2THR3,HTURBDIM,OUSERV,ZWORK1)
+!$acc kernels present_cr(PD_PHI3DTDZ2_O_DDTDZ)
    !$mnh_expand_array(JIJ=IIJB:IIJE,JK=1:IKT)
    PD_PHI3DTDZ2_O_DDTDZ(:,:) = PDTDZ(:,:) &
    * (PPHI3(:,:) +  ZWORK1(:,:))
    !$mnh_end_expand_array(JIJ=IIJB:IIJE,JK=1:IKT)
+!$acc end kernels
 ELSE
         !* 1DIM case
+!$acc kernels
     !$mnh_expand_where(JIJ=IIJB:IIJE,JK=1:IKT)    
     WHERE (PPHI3(:,:)<=CSTURB%XPHI_LIM)
       PD_PHI3DTDZ2_O_DDTDZ(:,:) = PPHI3(:,:)*PDTDZ(:,:)             &
@@ -1096,14 +1190,17 @@ ELSE
       PD_PHI3DTDZ2_O_DDTDZ(:,:) = PPHI3(:,:) * 2. * PDTDZ(:,:)
     END WHERE
     !$mnh_end_expand_where(JIJ=IIJB:IIJE,JK=1:IKT)    
+!$acc end kernels
 END IF
 !
 !* smoothing
 CALL SMOOTH_TURB_FUNCT(D,CSTURB,TURBN,PPHI3,PPHI3*2.*PDTDZ,PD_PHI3DTDZ2_O_DDTDZ)
 !
 !
+!$acc kernels
 PD_PHI3DTDZ2_O_DDTDZ(:,IKB-1)=PD_PHI3DTDZ2_O_DDTDZ(:,IKB)
 PD_PHI3DTDZ2_O_DDTDZ(:,IKE+1)=PD_PHI3DTDZ2_O_DDTDZ(:,IKE)
+!$acc end kernels
 !
 IF (LHOOK) CALL DR_HOOK('MODE_PRANDTL:D_PHI3DTDZ2_O_DDTDZ',1,ZHOOK_HANDLE)
 END SUBROUTINE D_PHI3DTDZ2_O_DDTDZ
@@ -1128,6 +1225,7 @@ IIJE=D%NIJE
 IIJB=D%NIJB
 IKT=D%NKT
 !
+!$acc kernels
 !$mnh_expand_array(JIJ=IIJB:IIJE,JK=1:IKT)
 PM3_WTH_WTH2(:,:) = TURBN%XCSHF*PBLL_O_E(:,:)&
                    * PETHETA(:,:)*0.5/CSTURB%XCTD        &
@@ -1135,6 +1233,7 @@ PM3_WTH_WTH2(:,:) = TURBN%XCSHF*PBLL_O_E(:,:)&
 !$mnh_end_expand_array(JIJ=IIJB:IIJE,JK=1:IKT)
 PM3_WTH_WTH2(:,IKB-1)=PM3_WTH_WTH2(:,IKB)
 PM3_WTH_WTH2(:,IKE+1)=PM3_WTH_WTH2(:,IKE)
+!$acc end kernels
 !
 IF (LHOOK) CALL DR_HOOK('MODE_PRANDTL:M3_WTH_WTH2',1,ZHOOK_HANDLE)
 END SUBROUTINE M3_WTH_WTH2
@@ -1160,6 +1259,7 @@ IIJE=D%NIJE
 IIJB=D%NIJB
 IKT=D%NKT
 !
+!$acc kernels
 !$mnh_expand_array(JIJ=IIJB:IIJE,JK=1:IKT)
 PD_M3_WTH_WTH2_O_DDTDZ(:,:) = &
 (0.5*TURBN%XCSHF*PBLL_O_E(:,:)*PETHETA(:,:)*0.5/CSTURB%XCTD/PD(:,:) &
@@ -1170,6 +1270,7 @@ PD_M3_WTH_WTH2_O_DDTDZ(:,:) = &
 !
 PD_M3_WTH_WTH2_O_DDTDZ(:,IKB-1)=PD_M3_WTH_WTH2_O_DDTDZ(:,IKB)
 PD_M3_WTH_WTH2_O_DDTDZ(:,IKE+1)=PD_M3_WTH_WTH2_O_DDTDZ(:,IKE)
+!$acc end kernels
 !
 IF (LHOOK) CALL DR_HOOK('MODE_PRANDTL:D_M3_WTH_WTH2_O_DDTDZ',1,ZHOOK_HANDLE)
 END SUBROUTINE D_M3_WTH_WTH2_O_DDTDZ
@@ -1196,6 +1297,7 @@ IIJB=D%NIJB
 IKT=D%NKT
 !
 CALL MZM_PHY(D,PTKE,ZWORK1)
+!$acc kernels
 !$mnh_expand_array(JIJ=IIJB:IIJE,JK=1:IKT)
 PM3_WTH_W2TH(:,:) = TURBN%XCSHF*PKEFF(:,:)*1.5/ZWORK1(:,:) &
   * (1. - 0.5*PREDR1(:,:)*(1.+PREDR1(:,:))/PD(:,:) ) &
@@ -1204,6 +1306,7 @@ PM3_WTH_W2TH(:,:) = TURBN%XCSHF*PKEFF(:,:)*1.5/ZWORK1(:,:) &
 !
 PM3_WTH_W2TH(:,IKB-1)=PM3_WTH_W2TH(:,IKB)
 PM3_WTH_W2TH(:,IKE+1)=PM3_WTH_W2TH(:,IKE)
+!$acc end kernels
 !
 IF (LHOOK) CALL DR_HOOK('MODE_PRANDTL:M3_WTH_W2TH',1,ZHOOK_HANDLE)
 END SUBROUTINE M3_WTH_W2TH
@@ -1232,6 +1335,7 @@ IIJB=D%NIJB
 IKT=D%NKT
 !
 CALL MZM_PHY(D,PTKE,ZWORK1)
+!$acc kernels
 !$mnh_expand_array(JIJ=IIJB:IIJE,JK=1:IKT)
 PD_M3_WTH_W2TH_O_DDTDZ(:,:) = &
  - TURBN%XCSHF*PKEFF(:,:)*1.5/ZWORK1(:,:)/(1.+PREDTH1(:,:))**2 &
@@ -1243,6 +1347,7 @@ PD_M3_WTH_W2TH_O_DDTDZ(:,:) = &
 !
 PD_M3_WTH_W2TH_O_DDTDZ(:,IKB-1)=PD_M3_WTH_W2TH_O_DDTDZ(:,IKB)
 PD_M3_WTH_W2TH_O_DDTDZ(:,IKE+1)=PD_M3_WTH_W2TH_O_DDTDZ(:,IKE)
+!$acc end kernels
 !
 IF (LHOOK) CALL DR_HOOK('MODE_PRANDTL:D_M3_WTH_W2TH_O_DDTDZ',1,ZHOOK_HANDLE)
 END SUBROUTINE D_M3_WTH_W2TH_O_DDTDZ
@@ -1270,6 +1375,7 @@ IIJB=D%NIJB
 IKT=D%NKT
 !
 CALL MZM_PHY(D,PTKE,ZWORK1)
+!$acc kernels
 !$mnh_expand_array(JIJ=IIJB:IIJE,JK=1:IKT)
 PM3_WTH_W2R(:,:) = &
   - TURBN%XCSHF*PKEFF(:,:)*0.75*TURBN%XCTV*PBLL_O_E(:,:) &
@@ -1278,6 +1384,7 @@ PM3_WTH_W2R(:,:) = &
 !
 PM3_WTH_W2R(:,IKB-1)=PM3_WTH_W2R(:,IKB)
 PM3_WTH_W2R(:,IKE+1)=PM3_WTH_W2R(:,IKE)
+!$acc end kernels
 !
 IF (LHOOK) CALL DR_HOOK('MODE_PRANDTL:M3_WTH_W2R',1,ZHOOK_HANDLE)
 END SUBROUTINE M3_WTH_W2R
@@ -1306,6 +1413,7 @@ IIJB=D%NIJB
 IKT=D%NKT
 !
 CALL MZM_PHY(D,PTKE,ZWORK1)
+!$acc kernels
 !$mnh_expand_array(JIJ=IIJB:IIJE,JK=1:IKT)
 PD_M3_WTH_W2R_O_DDTDZ(:,:) = &
 - TURBN%XCSHF*PKEFF(:,:)*0.75*TURBN%XCTV*PBLL_O_E(:,:) &
@@ -1316,6 +1424,7 @@ PD_M3_WTH_W2R_O_DDTDZ(:,:) = &
 !
 PD_M3_WTH_W2R_O_DDTDZ(:,IKB-1)=PD_M3_WTH_W2R_O_DDTDZ(:,IKB)
 PD_M3_WTH_W2R_O_DDTDZ(:,IKE+1)=PD_M3_WTH_W2R_O_DDTDZ(:,IKE)
+!$acc end kernels
 !
 IF (LHOOK) CALL DR_HOOK('MODE_PRANDTL:D_M3_WTH_W2R_O_DDTDZ',1,ZHOOK_HANDLE)
 END SUBROUTINE D_M3_WTH_W2R_O_DDTDZ
@@ -1345,11 +1454,14 @@ IIJE=D%NIJE
 IIJB=D%NIJB
 IKT=D%NKT
 !
+!$acc kernels
 !$mnh_expand_array(JIJ=IIJB:IIJE,JK=1:IKT)
 ZWORK1(:,:) = PBETA(:,:)*PLEPS(:,:) &
                                  /(PSQRT_TKE(:,:)*PTKE(:,:))
 !$mnh_end_expand_array(JIJ=IIJB:IIJE,JK=1:IKT)
+!$acc end kernels
 CALL MZM_PHY(D,ZWORK1,ZWORK2)
+!$acc kernels
 !$mnh_expand_array(JIJ=IIJB:IIJE,JK=1:IKT)
 PM3_WTH_WR2(:,:) = - TURBN%XCSHF*PKEFF(:,:)& 
                            *0.25*PBLL_O_E(:,:)*TURBN%XCTV*PEMOIST(:,:)**2 &
@@ -1358,6 +1470,7 @@ PM3_WTH_WR2(:,:) = - TURBN%XCSHF*PKEFF(:,:)&
 !
 PM3_WTH_WR2(:,IKB-1)=PM3_WTH_WR2(:,IKB)
 PM3_WTH_WR2(:,IKE+1)=PM3_WTH_WR2(:,IKE)
+!$acc end kernels
 !
 IF (LHOOK) CALL DR_HOOK('MODE_PRANDTL:M3_WTH_WR2',1,ZHOOK_HANDLE)
 END SUBROUTINE M3_WTH_WR2
@@ -1389,11 +1502,14 @@ IIJE=D%NIJE
 IIJB=D%NIJB
 IKT=D%NKT
 !
+!$acc kernels
 !$mnh_expand_array(JIJ=IIJB:IIJE,JK=1:IKT)
 ZWORK1(:,:) = PBETA(:,:)*PLEPS(:,:)&
                                   /(PSQRT_TKE(:,:)*PTKE(:,:))
 !$mnh_end_expand_array(JIJ=IIJB:IIJE,JK=1:IKT)
+!$acc end kernels
 CALL MZM_PHY(D,ZWORK1,ZWORK2)
+!$acc kernels
 !$mnh_expand_array(JIJ=IIJB:IIJE,JK=1:IKT)
 PD_M3_WTH_WR2_O_DDTDZ(:,:) = - TURBN%XCSHF*PKEFF(:,:)& 
                            *0.25*PBLL_O_E(:,:)*TURBN%XCTV*PEMOIST(:,:)**2 &
@@ -1404,6 +1520,7 @@ PD_M3_WTH_WR2_O_DDTDZ(:,:) = - TURBN%XCSHF*PKEFF(:,:)&
 !
 PD_M3_WTH_WR2_O_DDTDZ(:,IKB-1)=PD_M3_WTH_WR2_O_DDTDZ(:,IKB)
 PD_M3_WTH_WR2_O_DDTDZ(:,IKE+1)=PD_M3_WTH_WR2_O_DDTDZ(:,IKE)
+!$acc end kernels
 !
 IF (LHOOK) CALL DR_HOOK('MODE_PRANDTL:D_M3_WTH_WR2_O_DDTDZ',1,ZHOOK_HANDLE)
 END SUBROUTINE D_M3_WTH_WR2_O_DDTDZ
@@ -1432,11 +1549,14 @@ IIJE=D%NIJE
 IIJB=D%NIJB
 IKT=D%NKT
 !
+!$acc kernels
 !$mnh_expand_array(JIJ=IIJB:IIJE,JK=1:IKT)
 ZWORK1(:,:) = PBETA(:,:)*PLEPS(:,:)&
                                   /(PSQRT_TKE(:,:)*PTKE(:,:))
 !$mnh_end_expand_array(JIJ=IIJB:IIJE,JK=1:IKT)
+!$acc end kernels
 CALL MZM_PHY(D,ZWORK1,ZWORK2)
+!$acc kernels
 !$mnh_expand_array(JIJ=IIJB:IIJE,JK=1:IKT)
 PM3_WTH_WTHR(:,:) = &
                    TURBN%XCSHF*PKEFF(:,:)*PEMOIST(:,:)*ZWORK2(:,:) &
@@ -1445,6 +1565,7 @@ PM3_WTH_WTHR(:,:) = &
 !
 PM3_WTH_WTHR(:,IKB-1)=PM3_WTH_WTHR(:,IKB)
 PM3_WTH_WTHR(:,IKE+1)=PM3_WTH_WTHR(:,IKE)
+!$acc end kernels
 !
 IF (LHOOK) CALL DR_HOOK('MODE_PRANDTL:M3_WTH_WTHR',1,ZHOOK_HANDLE)
 END SUBROUTINE M3_WTH_WTHR
@@ -1470,6 +1591,7 @@ IIJE=D%NIJE
 IIJB=D%NIJB
 IKT=D%NKT
 !
+!$acc kernels
 !$mnh_expand_array(JIJ=IIJB:IIJE,JK=1:IKT)
 PD_M3_WTH_WTHR_O_DDTDZ(:,:) = &
                 - PM3_WTH_WTHR(:,:) * (1.5+PREDTH1(:,:)+PREDR1(:,:))&
@@ -1478,6 +1600,7 @@ PD_M3_WTH_WTHR_O_DDTDZ(:,:) = &
 !
 PD_M3_WTH_WTHR_O_DDTDZ(:,IKB-1)=PD_M3_WTH_WTHR_O_DDTDZ(:,IKB)
 PD_M3_WTH_WTHR_O_DDTDZ(:,IKE+1)=PD_M3_WTH_WTHR_O_DDTDZ(:,IKE)
+!$acc end kernels
 !
 IF (LHOOK) CALL DR_HOOK('MODE_PRANDTL:D_M3_WTH_WTHR_O_DDTDZ',1,ZHOOK_HANDLE)
 END SUBROUTINE D_M3_WTH_WTHR_O_DDTDZ
@@ -1505,11 +1628,14 @@ IIJE=D%NIJE
 IIJB=D%NIJB
 IKT=D%NKT
 !
+!$acc kernels
 !$mnh_expand_array(JIJ=IIJB:IIJE,JK=1:IKT)
 ZWORK1(:,:) = (1.-0.5*PREDR1(:,:)*(1.+PREDR1(:,:))& 
                                 /PD(:,:))/(1.+PREDTH1(:,:))*PDTDZ(:,:)
 !$mnh_end_expand_array(JIJ=IIJB:IIJE,JK=1:IKT)
+!$acc end kernels
 CALL MZF_PHY(D,ZWORK1,ZWORK2)
+!$acc kernels
 !$mnh_expand_array(JIJ=IIJB:IIJE,JK=1:IKT)
 PM3_TH2_W2TH(:,:) = - ZWORK2(:,:) &
                        * 1.5*PLM(:,:)*PLEPS(:,:)/PTKE(:,:)*TURBN%XCTV
@@ -1517,6 +1643,7 @@ PM3_TH2_W2TH(:,:) = - ZWORK2(:,:) &
 !
 PM3_TH2_W2TH(:,IKB-1)=PM3_TH2_W2TH(:,IKB)
 PM3_TH2_W2TH(:,IKE+1)=PM3_TH2_W2TH(:,IKE)
+!$acc end kernels
 !
 IF (LHOOK) CALL DR_HOOK('MODE_PRANDTL:M3_TH2_W2TH',1,ZHOOK_HANDLE)
 END SUBROUTINE M3_TH2_W2TH
@@ -1548,30 +1675,40 @@ IF (OUSERV) THEN
 !  D_M3_TH2_W2TH_O_DDTDZ(:,:) = - 1.5*PLM*PLEPS/PTKE*TURBN%XCTV * MZF(                    &
 !          (1.-0.5*PREDR1*(1.+PREDR1)/PD)*(1.-(1.5+PREDTH1+PREDR1)*(1.+PREDTH1)/PD )  &
 !        / (1.+PREDTH1)**2, IKA, IKU, IKL)
+!$acc kernels
   !$mnh_expand_array(JIJ=IIJB:IIJE,JK=1:IKT)
   ZWORK1(:,:) = (1.-0.5*PREDR1(:,:)*(1.+PREDR1(:,:))&
              / PD(:,:))*(1.-(1.5+PREDTH1(:,:)+PREDR1(:,:))   &
              * PREDTH1(:,:)*(1.+PREDTH1(:,:))/PD(:,:) ) &
              / (1.+PREDTH1(:,:))**2
   !$mnh_end_expand_array(JIJ=IIJB:IIJE,JK=1:IKT)
+!$acc end kernels
   CALL MZF_PHY(D,ZWORK1,ZWORK2)
+!$acc kernels
   !$mnh_expand_array(JIJ=IIJB:IIJE,JK=1:IKT)
   PD_M3_TH2_W2TH_O_DDTDZ(:,:) = - 1.5*PLM(:,:)*PLEPS(:,:) &
                                                    /PTKE(:,:)*TURBN%XCTV * ZWORK2(:,:)
   !$mnh_end_expand_array(JIJ=IIJB:IIJE,JK=1:IKT)
+!$acc end kernels
 ELSE
+!$acc kernels
   !$mnh_expand_array(JIJ=IIJB:IIJE,JK=1:IKT)
   ZWORK1(:,:) = 1./(1.+PREDTH1(:,:))**2
   !$mnh_end_expand_array(JIJ=IIJB:IIJE,JK=1:IKT)
+!$acc end kernels
   CALL MZF_PHY(D,ZWORK1,ZWORK2)
+!$acc kernels
   !$mnh_expand_array(JIJ=IIJB:IIJE,JK=1:IKT)
   PD_M3_TH2_W2TH_O_DDTDZ(:,:) = - 1.5*PLM(:,:)*PLEPS(:,:) & 
                                                    /PTKE(:,:)*TURBN%XCTV * ZWORK2(:,:)
   !$mnh_end_expand_array(JIJ=IIJB:IIJE,JK=1:IKT)
+!$acc end kernels
 END IF
 !
+!$acc kernels
 PD_M3_TH2_W2TH_O_DDTDZ(:,IKB-1)=PD_M3_TH2_W2TH_O_DDTDZ(:,IKB)
 PD_M3_TH2_W2TH_O_DDTDZ(:,IKE+1)=PD_M3_TH2_W2TH_O_DDTDZ(:,IKE)
+!$acc end kernels
 !
 IF (LHOOK) CALL DR_HOOK('MODE_PRANDTL:D_M3_TH2_W2TH_O_DDTDZ',1,ZHOOK_HANDLE)
 END SUBROUTINE D_M3_TH2_W2TH_O_DDTDZ
@@ -1597,11 +1734,14 @@ IIJE=D%NIJE
 IIJB=D%NIJB
 IKT=D%NKT
 !
+!$acc kernels
 !$mnh_expand_array(JIJ=IIJB:IIJE,JK=1:IKT)
 ZWORK1(:,:) = (1.+0.5*PREDTH1(:,:) &
                          +1.5*PREDR1(:,:)+0.5*PREDR1(:,:)**2)/PD(:,:)
 !$mnh_end_expand_array(JIJ=IIJB:IIJE,JK=1:IKT)
+!$acc end kernels
 CALL MZF_PHY(D,ZWORK1,ZWORK2)
+!$acc kernels
 !$mnh_expand_array(JIJ=IIJB:IIJE,JK=1:IKT)
 PM3_TH2_WTH2(:,:) = PLEPS(:,:)*0.5/CSTURB%XCTD/PSQRT_TKE(:,:) &
                      * ZWORK2(:,:)
@@ -1609,6 +1749,7 @@ PM3_TH2_WTH2(:,:) = PLEPS(:,:)*0.5/CSTURB%XCTD/PSQRT_TKE(:,:) &
 !
 PM3_TH2_WTH2(:,IKB-1)=PM3_TH2_WTH2(:,IKB)
 PM3_TH2_WTH2(:,IKE+1)=PM3_TH2_WTH2(:,IKE)
+!$acc end kernels
 !
 IF (LHOOK) CALL DR_HOOK('MODE_PRANDTL:M3_TH2_WTH2',1,ZHOOK_HANDLE)
 END SUBROUTINE M3_TH2_WTH2
@@ -1636,13 +1777,16 @@ IIJE=D%NIJE
 IIJB=D%NIJB
 IKT=D%NKT
 !
+!$acc kernels
 !$mnh_expand_array(JIJ=IIJB:IIJE,JK=1:IKT)
 ZWORK1(:,:) = PBLL_O_E(:,:)*PETHETA(:,:) &
              * (0.5/PD(:,:) - (1.5+PREDTH1(:,:)+PREDR1(:,:))& 
              *(1.+0.5*PREDTH1(:,:)+1.5*PREDR1(:,:)& 
              +0.5*PREDR1(:,:)**2)/PD(:,:)**2)
  !$mnh_end_expand_array(JIJ=IIJB:IIJE,JK=1:IKT)
+!$acc end kernels
 CALL MZF_PHY(D,ZWORK1,ZWORK2)
+!$acc kernels
 !$mnh_expand_array(JIJ=IIJB:IIJE,JK=1:IKT)
 PD_M3_TH2_WTH2_O_DDTDZ(:,:) = PLEPS(:,:) & 
                                  *0.5/CSTURB%XCTD/PSQRT_TKE(:,:)*TURBN%XCTV * ZWORK2(:,:)
@@ -1650,6 +1794,7 @@ PD_M3_TH2_WTH2_O_DDTDZ(:,:) = PLEPS(:,:) &
 !
 PD_M3_TH2_WTH2_O_DDTDZ(:,IKB-1)=PD_M3_TH2_WTH2_O_DDTDZ(:,IKB)
 PD_M3_TH2_WTH2_O_DDTDZ(:,IKE+1)=PD_M3_TH2_WTH2_O_DDTDZ(:,IKE)
+!$acc end kernels
 !
 IF (LHOOK) CALL DR_HOOK('MODE_PRANDTL:D_M3_TH2_WTH2_O_DDTDZ',1,ZHOOK_HANDLE)
 END SUBROUTINE D_M3_TH2_WTH2_O_DDTDZ
@@ -1677,11 +1822,14 @@ IIJE=D%NIJE
 IIJB=D%NIJB
 IKT=D%NKT
 !
+!$acc kernels
 !$mnh_expand_array(JIJ=IIJB:IIJE,JK=1:IKT)
 ZWORK1(:,:) = PBLL_O_E(:,:)*PEMOIST(:,:) & 
                                  /PD(:,:)*PDTDZ(:,:)**2
 !$mnh_end_expand_array(JIJ=IIJB:IIJE,JK=1:IKT)
+!$acc end kernels
 CALL MZF_PHY(D,ZWORK1,ZWORK2)
+!$acc kernels
 !$mnh_expand_array(JIJ=IIJB:IIJE,JK=1:IKT)
 PM3_TH2_W2R(:,:) = 0.75*TURBN%XCTV**2*ZWORK2(:,:) &
                     *PLM(:,:)*PLEPS(:,:)/PTKE(:,:)
@@ -1689,6 +1837,7 @@ PM3_TH2_W2R(:,:) = 0.75*TURBN%XCTV**2*ZWORK2(:,:) &
 !
 PM3_TH2_W2R(:,IKB-1)=PM3_TH2_W2R(:,IKB)
 PM3_TH2_W2R(:,IKE+1)=PM3_TH2_W2R(:,IKE)
+!$acc end kernels
 !
 IF (LHOOK) CALL DR_HOOK('MODE_PRANDTL:M3_TH2_W2R',1,ZHOOK_HANDLE)
 END SUBROUTINE M3_TH2_W2R
@@ -1718,12 +1867,15 @@ IIJE=D%NIJE
 IIJB=D%NIJB
 IKT=D%NKT
 !
+!$acc kernels
 !$mnh_expand_array(JIJ=IIJB:IIJE,JK=1:IKT)
 ZWORK1(:,:) =  PBLL_O_E(:,:)*PEMOIST(:,:)& 
  /PD(:,:)*PDTDZ(:,:)*(2.-PREDTH1(:,:)* & 
  (1.5+PREDTH1(:,:)+PREDR1(:,:))/PD(:,:))
 !$mnh_end_expand_array(JIJ=IIJB:IIJE,JK=1:IKT)
+!$acc end kernels
 CALL MZF_PHY(D,ZWORK1,ZWORK2)
+!$acc kernels
 !$mnh_expand_array(JIJ=IIJB:IIJE,JK=1:IKT)
 PD_M3_TH2_W2R_O_DDTDZ(:,:) = 0.75*TURBN%XCTV**2*PLM(:,:) *PLEPS(:,:) &
                                                 /PTKE(:,:) * ZWORK2(:,:)
@@ -1731,6 +1883,7 @@ PD_M3_TH2_W2R_O_DDTDZ(:,:) = 0.75*TURBN%XCTV**2*PLM(:,:) *PLEPS(:,:) &
 !
 PD_M3_TH2_W2R_O_DDTDZ(:,IKB-1)=PD_M3_TH2_W2R_O_DDTDZ(:,IKB)
 PD_M3_TH2_W2R_O_DDTDZ(:,IKE+1)=PD_M3_TH2_W2R_O_DDTDZ(:,IKE)
+!$acc end kernels
 !
 IF (LHOOK) CALL DR_HOOK('MODE_PRANDTL:D_M3_TH2_W2R_O_DDTDZ',1,ZHOOK_HANDLE)
 END SUBROUTINE D_M3_TH2_W2R_O_DDTDZ
@@ -1757,11 +1910,14 @@ IIJE=D%NIJE
 IIJB=D%NIJB
 IKT=D%NKT
 !
+!$acc kernels
 !$mnh_expand_array(JIJ=IIJB:IIJE,JK=1:IKT)
 ZWORK1(:,:) = (PBLL_O_E(:,:)*PEMOIST(:,:)& 
                                   *PDTDZ(:,:))**2/PD(:,:)
 !$mnh_end_expand_array(JIJ=IIJB:IIJE,JK=1:IKT)
+!$acc end kernels
 CALL MZF_PHY(D,ZWORK1,ZWORK2)
+!$acc kernels
 !$mnh_expand_array(JIJ=IIJB:IIJE,JK=1:IKT)
 PM3_TH2_WR2(:,:) = 0.25*TURBN%XCTV**2*ZWORK2(:,:)&
                     *PLEPS(:,:)/PSQRT_TKE(:,:)/CSTURB%XCTD
@@ -1769,6 +1925,7 @@ PM3_TH2_WR2(:,:) = 0.25*TURBN%XCTV**2*ZWORK2(:,:)&
 !
 PM3_TH2_WR2(:,IKB-1)=PM3_TH2_WR2(:,IKB)
 PM3_TH2_WR2(:,IKE+1)=PM3_TH2_WR2(:,IKE)
+!$acc end kernels
 !
 IF (LHOOK) CALL DR_HOOK('MODE_PRANDTL:M3_TH2_WR2',1,ZHOOK_HANDLE)
 END SUBROUTINE M3_TH2_WR2
@@ -1797,12 +1954,15 @@ IIJE=D%NIJE
 IIJB=D%NIJB
 IKT=D%NKT
 !
+!$acc kernels
 !$mnh_expand_array(JIJ=IIJB:IIJE,JK=1:IKT)
 ZWORK1(:,:) = (PBLL_O_E(:,:)*PEMOIST(:,:))**2 & 
 *PDTDZ(:,:)/PD(:,:)*(2.-PREDTH1(:,:) & 
 *(1.5+PREDTH1(:,:)+PREDR1(:,:))/PD(:,:))
 !$mnh_end_expand_array(JIJ=IIJB:IIJE,JK=1:IKT)
+!$acc end kernels
 CALL MZF_PHY(D,ZWORK1,ZWORK2)
+!$acc kernels
 !$mnh_expand_array(JIJ=IIJB:IIJE,JK=1:IKT)
 PD_M3_TH2_WR2_O_DDTDZ(:,:) = 0.25*TURBN%XCTV**2*PLEPS(:,:) & 
                                                / PSQRT_TKE(:,:)/CSTURB%XCTD * ZWORK2(:,:)
@@ -1810,6 +1970,7 @@ PD_M3_TH2_WR2_O_DDTDZ(:,:) = 0.25*TURBN%XCTV**2*PLEPS(:,:) &
 !
 PD_M3_TH2_WR2_O_DDTDZ(:,IKB-1)=PD_M3_TH2_WR2_O_DDTDZ(:,IKB)
 PD_M3_TH2_WR2_O_DDTDZ(:,IKE+1)=PD_M3_TH2_WR2_O_DDTDZ(:,IKE)
+!$acc end kernels
 !
 IF (LHOOK) CALL DR_HOOK('MODE_PRANDTL:D_M3_TH2_WR2_O_DDTDZ',1,ZHOOK_HANDLE)
 END SUBROUTINE D_M3_TH2_WR2_O_DDTDZ
@@ -1837,11 +1998,14 @@ IIJE=D%NIJE
 IIJB=D%NIJB
 IKT=D%NKT
 !
+!$acc kernels
 !$mnh_expand_array(JIJ=IIJB:IIJE,JK=1:IKT)
 ZWORK1(:,:) = PBLL_O_E(:,:)*PEMOIST(:,:) & 
                                 * PDTDZ(:,:)*(1.+PREDR1(:,:))/PD(:,:)
 !$mnh_end_expand_array(JIJ=IIJB:IIJE,JK=1:IKT)
+!$acc end kernels
 CALL MZF_PHY(D,ZWORK1,ZWORK2)
+!$acc kernels
 !$mnh_expand_array(JIJ=IIJB:IIJE,JK=1:IKT)
 PM3_TH2_WTHR(:,:) = - 0.5*TURBN%XCTV*PLEPS(:,:) & 
                                        / PSQRT_TKE(:,:)/CSTURB%XCTD * ZWORK2(:,:)
@@ -1849,6 +2013,7 @@ PM3_TH2_WTHR(:,:) = - 0.5*TURBN%XCTV*PLEPS(:,:) &
 !
 PM3_TH2_WTHR(:,IKB-1)=PM3_TH2_WTHR(:,IKB)
 PM3_TH2_WTHR(:,IKE+1)=PM3_TH2_WTHR(:,IKE)
+!$acc end kernels
 !
 IF (LHOOK) CALL DR_HOOK('MODE_PRANDTL:M3_TH2_WTHR',1,ZHOOK_HANDLE)
 END SUBROUTINE M3_TH2_WTHR
@@ -1877,12 +2042,15 @@ IIJE=D%NIJE
 IIJB=D%NIJB
 IKT=D%NKT
 !
+!$acc kernels
 !$mnh_expand_array(JIJ=IIJB:IIJE,JK=1:IKT)
 ZWORK1(:,:) = PBLL_O_E(:,:)*PEMOIST(:,:)* & 
                  (1.+PREDR1(:,:))/PD(:,:) * (1. -PREDTH1(:,:)*& 
                  (1.5+PREDTH1(:,:)+PREDR1(:,:))/PD(:,:))
 !$mnh_end_expand_array(JIJ=IIJB:IIJE,JK=1:IKT)
+!$acc end kernels
 CALL MZF_PHY(D,ZWORK1,ZWORK2)
+!$acc kernels
 !$mnh_expand_array(JIJ=IIJB:IIJE,JK=1:IKT)
 PD_M3_TH2_WTHR_O_DDTDZ(:,:) = - 0.5*TURBN%XCTV*PLEPS(:,:) & 
                                                 / PSQRT_TKE(:,:)/CSTURB%XCTD * ZWORK2(:,:) 
@@ -1890,6 +2058,7 @@ PD_M3_TH2_WTHR_O_DDTDZ(:,:) = - 0.5*TURBN%XCTV*PLEPS(:,:) &
 !
 PD_M3_TH2_WTHR_O_DDTDZ(:,IKB-1)=PD_M3_TH2_WTHR_O_DDTDZ(:,IKB)
 PD_M3_TH2_WTHR_O_DDTDZ(:,IKE+1)=PD_M3_TH2_WTHR_O_DDTDZ(:,IKE)
+!$acc end kernels
 !
 IF (LHOOK) CALL DR_HOOK('MODE_PRANDTL:D_M3_TH2_WTHR_O_DDTDZ',1,ZHOOK_HANDLE)
 END SUBROUTINE D_M3_TH2_WTHR_O_DDTDZ
@@ -1915,11 +2084,14 @@ IIJE=D%NIJE
 IIJB=D%NIJB
 IKT=D%NKT
 !
+!$acc kernels
 !$mnh_expand_array(JIJ=IIJB:IIJE,JK=1:IKT)
 ZWORK1(:,:) =  (1.+PREDTH1(:,:))* & 
                                    (1.+PREDR1(:,:))/PD(:,:)
 !$mnh_end_expand_array(JIJ=IIJB:IIJE,JK=1:IKT)
+!$acc end kernels
 CALL MZF_PHY(D,ZWORK1,ZWORK2)
+!$acc kernels
 !$mnh_expand_array(JIJ=IIJB:IIJE,JK=1:IKT)
 PM3_THR_WTHR(:,:) = 0.5*PLEPS(:,:)/PSQRT_TKE(:,:)/CSTURB%XCTD &
                      * ZWORK2(:,:)
@@ -1927,6 +2099,7 @@ PM3_THR_WTHR(:,:) = 0.5*PLEPS(:,:)/PSQRT_TKE(:,:)/CSTURB%XCTD &
 !
 PM3_THR_WTHR(:,IKB-1)=PM3_THR_WTHR(:,IKB)
 PM3_THR_WTHR(:,IKE+1)=PM3_THR_WTHR(:,IKE)
+!$acc end kernels
 !
 IF (LHOOK) CALL DR_HOOK('MODE_PRANDTL:M3_THR_WTHR',1,ZHOOK_HANDLE)
 END SUBROUTINE M3_THR_WTHR
@@ -1954,12 +2127,15 @@ IIJE=D%NIJE
 IIJB=D%NIJB
 IKT=D%NKT
 !
+!$acc kernels
 !$mnh_expand_array(JIJ=IIJB:IIJE,JK=1:IKT)
 ZWORK1(:,:) = PETHETA(:,:)*PBLL_O_E(:,:)/PD(:,:) & 
                              *(1.+PREDR1(:,:))*(1.-(1.+PREDTH1(:,:)) & 
                              *(1.5+PREDTH1(:,:)+PREDR1(:,:))/PD(:,:))
 !$mnh_end_expand_array(JIJ=IIJB:IIJE,JK=1:IKT)
+!$acc end kernels
 CALL MZF_PHY(D,ZWORK1,ZWORK2)
+!$acc kernels
 !$mnh_expand_array(JIJ=IIJB:IIJE,JK=1:IKT)
 PD_M3_THR_WTHR_O_DDTDZ(:,:) = 0.5*PLEPS(:,:)/PSQRT_TKE(:,:) & 
                                                 / CSTURB%XCTD * TURBN%XCTV * ZWORK2(:,:)
@@ -1967,6 +2143,7 @@ PD_M3_THR_WTHR_O_DDTDZ(:,:) = 0.5*PLEPS(:,:)/PSQRT_TKE(:,:) &
 !
 PD_M3_THR_WTHR_O_DDTDZ(:,IKB-1)=PD_M3_THR_WTHR_O_DDTDZ(:,IKB)
 PD_M3_THR_WTHR_O_DDTDZ(:,IKE+1)=PD_M3_THR_WTHR_O_DDTDZ(:,IKE)
+!$acc end kernels
 !
 IF (LHOOK) CALL DR_HOOK('MODE_PRANDTL:D_M3_THR_WTHR_O_DDTDZ',1,ZHOOK_HANDLE)
 END SUBROUTINE D_M3_THR_WTHR_O_DDTDZ
@@ -1994,11 +2171,14 @@ IIJE=D%NIJE
 IIJB=D%NIJB
 IKT=D%NKT
 !
+!$acc kernels
 !$mnh_expand_array(JIJ=IIJB:IIJE,JK=1:IKT)
 ZWORK1(:,:) = (1.+PREDR1(:,:))*PBLL_O_E(:,:)* & 
                                   PETHETA(:,:)*PDRDZ(:,:)/PD(:,:)
 !$mnh_end_expand_array(JIJ=IIJB:IIJE,JK=1:IKT)
+!$acc end kernels
 CALL MZF_PHY(D,ZWORK1,ZWORK2)
+!$acc kernels
 !$mnh_expand_array(JIJ=IIJB:IIJE,JK=1:IKT)
 PM3_THR_WTH2(:,:) = - 0.25*PLEPS(:,:) & 
                                     / PSQRT_TKE(:,:)/CSTURB%XCTD*TURBN%XCTV * ZWORK2(:,:)
@@ -2006,6 +2186,7 @@ PM3_THR_WTH2(:,:) = - 0.25*PLEPS(:,:) &
 !
 PM3_THR_WTH2(:,IKB-1)=PM3_THR_WTH2(:,IKB)
 PM3_THR_WTH2(:,IKE+1)=PM3_THR_WTH2(:,IKE)
+!$acc end kernels
 !
 IF (LHOOK) CALL DR_HOOK('MODE_PRANDTL:M3_THR_WTH2',1,ZHOOK_HANDLE)
 END SUBROUTINE M3_THR_WTH2
@@ -2034,13 +2215,16 @@ IIJE=D%NIJE
 IIJB=D%NIJB
 IKT=D%NKT
 !
+!$acc kernels
 !$mnh_expand_array(JIJ=IIJB:IIJE,JK=1:IKT)
 ZWORK1(:,:) = -(1.+PREDR1(:,:))*(PBLL_O_E(:,:) & 
                                  *PETHETA(:,:)/PD(:,:))**2&
                                  *PDRDZ(:,:)&
                                  *(1.5+PREDTH1(:,:)+PREDR1(:,:))
 !$mnh_end_expand_array(JIJ=IIJB:IIJE,JK=1:IKT)
+!$acc end kernels
 CALL MZF_PHY(D,ZWORK1,ZWORK2)
+!$acc kernels
 !$mnh_expand_array(JIJ=IIJB:IIJE,JK=1:IKT)
 PD_M3_THR_WTH2_O_DDTDZ(:,:) = - 0.25*PLEPS(:,:) &
                                  /PSQRT_TKE(:,:)/CSTURB%XCTD*TURBN%XCTV**2 * ZWORK2(:,:) 
@@ -2048,6 +2232,7 @@ PD_M3_THR_WTH2_O_DDTDZ(:,:) = - 0.25*PLEPS(:,:) &
 !
 PD_M3_THR_WTH2_O_DDTDZ(:,IKB-1)=PD_M3_THR_WTH2_O_DDTDZ(:,IKB)
 PD_M3_THR_WTH2_O_DDTDZ(:,IKE+1)=PD_M3_THR_WTH2_O_DDTDZ(:,IKE)
+!$acc end kernels
 !
 IF (LHOOK) CALL DR_HOOK('MODE_PRANDTL:D_M3_THR_WTH2_O_DDTDZ',1,ZHOOK_HANDLE)
 END SUBROUTINE D_M3_THR_WTH2_O_DDTDZ
@@ -2075,12 +2260,15 @@ IIJE=D%NIJE
 IIJB=D%NIJB
 IKT=D%NKT
 !
+!$acc kernels
 !$mnh_expand_array(JIJ=IIJB:IIJE,JK=1:IKT)
 ZWORK1(:,:) = PBLL_O_E(:,:)*PETHETA(:,:)/PD(:,:)&
        *(-(1.+PREDR1(:,:))*PREDR1(:,:)/PD(:,:)&
        *(1.5+PREDTH1(:,:)+PREDR1(:,:))+(1.+2.*PREDR1(:,:)))
 !$mnh_end_expand_array(JIJ=IIJB:IIJE,JK=1:IKT)
+!$acc end kernels
 CALL MZF_PHY(D,ZWORK1,ZWORK2)
+!$acc kernels
 !$mnh_expand_array(JIJ=IIJB:IIJE,JK=1:IKT)
 PD_M3_THR_WTH2_O_DDRDZ(:,:) = - 0.25*PLEPS(:,:)/PSQRT_TKE(:,:)& 
                                                 / CSTURB%XCTD*TURBN%XCTV * ZWORK2(:,:)
@@ -2088,6 +2276,7 @@ PD_M3_THR_WTH2_O_DDRDZ(:,:) = - 0.25*PLEPS(:,:)/PSQRT_TKE(:,:)&
 !
 PD_M3_THR_WTH2_O_DDRDZ(:,IKB-1)=PD_M3_THR_WTH2_O_DDRDZ(:,IKB)
 PD_M3_THR_WTH2_O_DDRDZ(:,IKE+1)=PD_M3_THR_WTH2_O_DDRDZ(:,IKE)
+!$acc end kernels
 !
 IF (LHOOK) CALL DR_HOOK('MODE_PRANDTL:D_M3_THR_WTH2_O_DDRDZ',1,ZHOOK_HANDLE)
 END SUBROUTINE D_M3_THR_WTH2_O_DDRDZ
@@ -2114,10 +2303,13 @@ IIJE=D%NIJE
 IIJB=D%NIJB
 IKT=D%NKT
 !
+!$acc kernels
 !$mnh_expand_array(JIJ=IIJB:IIJE,JK=1:IKT)
 ZWORK1(:,:) = (1.+PREDR1(:,:))*PDRDZ(:,:)/PD(:,:)
 !$mnh_end_expand_array(JIJ=IIJB:IIJE,JK=1:IKT)
+!$acc end kernels
 CALL MZF_PHY(D,ZWORK1,ZWORK2)
+!$acc kernels
 !$mnh_expand_array(JIJ=IIJB:IIJE,JK=1:IKT)
 PM3_THR_W2TH(:,:) = - 0.75*PLM(:,:)*PLEPS(:,:)& 
                                       / PTKE(:,:) * TURBN%XCTV * ZWORK2(:,:)
@@ -2125,6 +2317,7 @@ PM3_THR_W2TH(:,:) = - 0.75*PLM(:,:)*PLEPS(:,:)&
 !
 PM3_THR_W2TH(:,IKB-1)=PM3_THR_W2TH(:,IKB)
 PM3_THR_W2TH(:,IKE+1)=PM3_THR_W2TH(:,IKE)
+!$acc end kernels
 !
 IF (LHOOK) CALL DR_HOOK('MODE_PRANDTL:M3_THR_W2TH',1,ZHOOK_HANDLE)
 END SUBROUTINE M3_THR_W2TH
@@ -2154,12 +2347,15 @@ IIJE=D%NIJE
 IIJB=D%NIJB
 IKT=D%NKT
 !
+!$acc kernels
 !$mnh_expand_array(JIJ=IIJB:IIJE,JK=1:IKT)
 ZWORK1(:,:) =  -PETHETA(:,:)*PBLL_O_E(:,:)*& 
 (1.+PREDR1(:,:))*PDRDZ(:,:)& 
 *(1.5+PREDTH1(:,:)+PREDR1(:,:))/PD(:,:)**2
 !$mnh_end_expand_array(JIJ=IIJB:IIJE,JK=1:IKT)
+!$acc end kernels
 CALL MZF_PHY(D,ZWORK1,ZWORK2)
+!$acc kernels
 !$mnh_expand_array(JIJ=IIJB:IIJE,JK=1:IKT)
 PD_M3_THR_W2TH_O_DDTDZ(:,:) = - 0.75*PLM(:,:)*PLEPS(:,:)&
                                                 / PTKE(:,:) * TURBN%XCTV**2 * ZWORK1(:,:)
@@ -2167,6 +2363,7 @@ PD_M3_THR_W2TH_O_DDTDZ(:,:) = - 0.75*PLM(:,:)*PLEPS(:,:)&
 !
 PD_M3_THR_W2TH_O_DDTDZ(:,IKB-1)=PD_M3_THR_W2TH_O_DDTDZ(:,IKB)
 PD_M3_THR_W2TH_O_DDTDZ(:,IKE+1)=PD_M3_THR_W2TH_O_DDTDZ(:,IKE)
+!$acc end kernels
 !
 IF (LHOOK) CALL DR_HOOK('MODE_PRANDTL:D_M3_THR_W2TH_O_DDTDZ',1,ZHOOK_HANDLE)
 END SUBROUTINE D_M3_THR_W2TH_O_DDTDZ
@@ -2193,12 +2390,15 @@ IIJE=D%NIJE
 IIJB=D%NIJB
 IKT=D%NKT
 !
+!$acc kernels
 !$mnh_expand_array(JIJ=IIJB:IIJE,JK=1:IKT)
 ZWORK1(:,:) =  -(1.+PREDR1(:,:))*PREDR1(:,:)&
 * (1.5+PREDTH1(:,:)+PREDR1(:,:))/PD(:,:)**2          &
         +(1.+2.*PREDR1(:,:))/PD(:,:)
 !$mnh_end_expand_array(JIJ=IIJB:IIJE,JK=1:IKT)
+!$acc end kernels
 CALL MZF_PHY(D,ZWORK1,ZWORK2)
+!$acc kernels
 !$mnh_expand_array(JIJ=IIJB:IIJE,JK=1:IKT)
 PD_M3_THR_W2TH_O_DDRDZ(:,:) = - 0.75*PLM(:,:)*PLEPS(:,:)&
                                                 / PTKE(:,:) * TURBN%XCTV * ZWORK2(:,:)
@@ -2206,6 +2406,7 @@ PD_M3_THR_W2TH_O_DDRDZ(:,:) = - 0.75*PLM(:,:)*PLEPS(:,:)&
 !
 PD_M3_THR_W2TH_O_DDRDZ(:,IKB-1)=PD_M3_THR_W2TH_O_DDRDZ(:,IKB)
 PD_M3_THR_W2TH_O_DDRDZ(:,IKE+1)=PD_M3_THR_W2TH_O_DDRDZ(:,IKE)
+!$acc end kernels
 !
 IF (LHOOK) CALL DR_HOOK('MODE_PRANDTL:D_M3_THR_W2TH_O_DDRDZ',1,ZHOOK_HANDLE)
 END SUBROUTINE D_M3_THR_W2TH_O_DDRDZ
